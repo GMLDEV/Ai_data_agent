@@ -38,6 +38,13 @@ class DynamicCodeExecutionWorkflow(BaseWorkflow):
             - libraries_needed: Python libraries to include
         """
         logger.info("Planning dynamic execution workflow")
+        if not isinstance(file_manifest, dict):
+            if isinstance(file_manifest, list):
+                logger.warning(f"[DynamicCodeExecutionWorkflow.plan] file_manifest is a list, converting to dict: {file_manifest}")
+                file_manifest = {str(i): v for i, v in enumerate(file_manifest)}
+            else:
+                logger.error(f"[DynamicCodeExecutionWorkflow.plan] file_manifest is not a dict, got {type(file_manifest)}: {file_manifest}")
+                raise TypeError(f"[DynamicCodeExecutionWorkflow.plan] file_manifest must be a dict, got {type(file_manifest)}")
         
         plan = {
             "data_sources": [],
