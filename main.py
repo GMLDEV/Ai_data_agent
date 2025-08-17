@@ -134,11 +134,12 @@ async def process_request(
     files: Optional[List[UploadFile]] = File(None)
 ):
     """Main LLM-powered request processing endpoint"""
+    import traceback
     try:
         # Read questions from questions.txt file
         questions_content = await questions_txt.read()
         questions = questions_content.decode('utf-8')
-        
+
         # Process additional files
         file_dict = {}
         if files:
@@ -148,17 +149,33 @@ async def process_request(
                     continue
                 content = await file.read()
                 file_dict[file.filename] = content
-        
+
         # Process request with LLM orchestrator
         result = orchestrator.process_request(questions, file_dict)
-        
+
         return JSONResponse(content=result)
-        
+
     except Exception as e:
-        logger.error(f"Request processing failed: {str(e)}")
+        tb = traceback.format_exc()
+        logger.error(f"Request processing failed: {str(e)}\n{tb}")
+        # Try to include workflow and manifest info if possible
+        workflow = None
+        manifest_type = None
+        try:
+            workflow = getattr(orchestrator, 'last_workflow', None)
+            manifest_type = type(getattr(orchestrator, 'last_manifest', None)).__name__
+        except Exception:
+            pass
         return JSONResponse(
             status_code=500,
-            content={"success": False, "error": str(e)}
+            content={
+                "success": False,
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+                "traceback": tb,
+                "workflow": str(workflow),
+                "manifest_type": str(manifest_type)
+            }
         )
 
 # Also add this import at the top of main.py
