@@ -38,6 +38,10 @@ class SandboxExecutor:
         """
         self.max_memory_mb = max_memory_mb
         self.max_cpu_time_seconds = max_cpu_time_seconds
+        # Defensive: ensure allowed_imports is always iterable
+        if allowed_imports is not None and not isinstance(allowed_imports, (list, tuple, set)):
+            logger.error(f"allowed_imports must be iterable, got {type(allowed_imports)}: {allowed_imports}")
+            allowed_imports = None
         self.allowed_imports = allowed_imports or [
             'pandas', 'numpy', 'matplotlib', 'seaborn', 'requests', 
             'beautifulsoup4', 'bs4', 'json', 'csv', 'os', 'sys', 
@@ -263,7 +267,13 @@ if __name__ == "__main__":
     def _validate_imports(self, code: str, additional_allowed: Optional[List[str]] = None) -> Dict[str, Any]:
         """Validate that only allowed imports are used."""
         
-        allowed = set(self.allowed_imports)
+        # Defensive: ensure self.allowed_imports is always a list
+        if not isinstance(self.allowed_imports, (list, tuple, set)):
+            logger.error(f"self.allowed_imports must be iterable, got {type(self.allowed_imports)}: {self.allowed_imports}")
+            allowed_imports = []
+        else:
+            allowed_imports = self.allowed_imports
+        allowed = set(allowed_imports)
         if additional_allowed:
             # Ensure additional_allowed is iterable
             if isinstance(additional_allowed, str):
