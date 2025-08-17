@@ -171,5 +171,3 @@ tiktoken
 - Integration, further prompt refinement, and production deployment are next priorities.
 
 ---
-
-**Use this context to onboard new team members, explain your project, or ask an AI for targeted next steps!**
