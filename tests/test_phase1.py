@@ -1,10 +1,12 @@
 import asyncio
+import pytest
 import json
 from pathlib import Path
 from core.file_processor import FileProcessor
 from sandbox.executor import SandboxExecutor
 from config import settings
 
+@pytest.mark.asyncio
 async def test_file_processor():
     """Test file processor with sample data"""
     print("Testing File Processor...")
@@ -56,7 +58,7 @@ print("Sum of column 'a':", df['a'].sum())
     
     result = executor.execute_simple(test_code)
     print("Code execution result:", json.dumps(result, indent=2))
-    return result.get('success', False)
+    assert result.get('success', False)
 
 async def main():
     """Run all tests"""

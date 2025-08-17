@@ -3,14 +3,14 @@ import logging
 from .classifier import WorkflowClassifier
 from .file_processor import FileProcessor
 from .code_generator import CodeGenerator
-from ..workflows import get_workflow
-from ..sandbox.executor import SandboxExecutor
+from workflows.init import get_workflow
+from sandbox.executor import SandboxExecutor
 from config import settings
 
 logger = logging.getLogger(__name__)
 
 class LLMOrchestrator:
-    def __init__(self):
+    def __init__(self, workflows=None):
         # Initialize components
         self.file_processor = FileProcessor()
         
@@ -30,10 +30,17 @@ class LLMOrchestrator:
             settings.sandbox_cpu_limit,
             settings.max_execution_time
         )
+        
+        # Store provided workflows or initialize empty dict
+        self.workflows = workflows or {}
     
     def process_request(self, questions: str, files: Dict[str, Any]) -> Dict[str, Any]:
         """Main request processing pipeline"""
         try:
+            # Generate a request ID using timestamp and first few chars of question
+            import uuid
+            request_id = str(uuid.uuid4())
+            
             # Step 1: Create file manifest
             manifest = self.file_processor.create_manifest(files, questions)
             logger.info(f"Created manifest for {len(files)} files")
@@ -52,6 +59,7 @@ class LLMOrchestrator:
             # Step 4: Format response
             return {
                 "success": True,
+                "request_id": request_id,
                 "workflow_used": classification['workflow'],
                 "confidence": classification.get('confidence', 0),
                 "reasoning": classification.get('reasoning', 'No reasoning provided'),
@@ -70,10 +78,16 @@ class LLMOrchestrator:
     def _execute_workflow(self, classification: Dict[str, Any], manifest: Dict[str, Any], questions: str) -> Dict[str, Any]:
         """Execute the appropriate workflow"""
         try:
-            if self.llm_available:
-                # Use LLM-powered workflow
+            workflow_type = classification['workflow']
+            
+            if workflow_type in self.workflows:
+                # Use provided workflow instance
+                workflow = self.workflows[workflow_type]
+                result = workflow.execute(self.sandbox, questions)
+            elif self.llm_available:
+                # Fallback to creating new workflow if not provided
                 workflow = get_workflow(
-                    classification['workflow'], 
+                    workflow_type, 
                     self.code_generator, 
                     manifest
                 )

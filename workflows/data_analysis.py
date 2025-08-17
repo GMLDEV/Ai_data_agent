@@ -14,12 +14,14 @@ class DataAnalysisWorkflow(BaseWorkflow):
     Inherits from DynamicCodeExecutionWorkflow for code generation and execution.
     """
     
-    def __init__(self, code_generator, sandbox_executor, llm_client=None):
-        super().__init__()
-        self.dynamic_workflow = DynamicCodeExecutionWorkflow(code_generator, sandbox_executor)
-        self.code_generator = code_generator
+    def __init__(self, code_generator, manifest, sandbox_executor=None, llm_client=None):
+        super().__init__(code_generator=code_generator, manifest=manifest)
+        self.dynamic_workflow = DynamicCodeExecutionWorkflow(code_generator=code_generator, manifest=manifest, sandbox_executor=sandbox_executor)
         self.sandbox_executor = sandbox_executor
         self.llm_client = llm_client or LLMClient()
+
+    def get_workflow_type(self):
+        return "data_analysis"
 
     def plan(self, questions: List[str], file_manifest: Dict[str, Any], 
              keywords: List[str], urls: List[str]) -> Dict[str, Any]:

@@ -1,11 +1,10 @@
 import asyncio
 import requests
 import json
+import pytest
 
 def test_llm_classification():
     """Test the LLM classifier"""
-    print("=== Testing LLM Classification ===")
-    
     # Test data
     test_cases = [
         {
@@ -30,14 +29,11 @@ def test_llm_classification():
         from config import settings
         
         if not settings.openai_api_key:
-            print("❌ OpenAI API key not found. Please add it to .env file")
-            return False
+            pytest.skip("OpenAI API key not found. Please add it to .env file")
             
         classifier = WorkflowClassifier()
         
         for i, test_case in enumerate(test_cases):
-            print(f"\nTest {i+1}: {test_case['questions'][:50]}...")
-            
             manifest = {
                 "questions": test_case["questions"],
                 "file_types": test_case["file_types"],
@@ -47,15 +43,12 @@ def test_llm_classification():
             }
             
             result = classifier.classify(manifest)
-            print(f"Result: {result['workflow']} (confidence: {result.get('confidence', 0):.2f})")
-            print(f"Reasoning: {result.get('reasoning', 'No reasoning')}")
+            assert result['workflow'] == test_case['expected'], f"Expected {test_case['expected']} but got {result['workflow']}"
+            assert 'confidence' in result, "Confidence score missing in result"
+            assert 'reasoning' in result, "Reasoning missing in result"
             
-        print("\n✅ LLM Classification tests completed")
-        return True
-        
     except Exception as e:
-        print(f"❌ LLM Classification test failed: {e}")
-        return False
+        pytest.fail(f"LLM Classification test failed: {e}")
 
 def test_api_endpoint():
     """Test the new API endpoint"""

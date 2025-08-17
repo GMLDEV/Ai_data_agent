@@ -7,16 +7,17 @@ from workflows.base import BaseWorkflow
 logger = logging.getLogger(__name__)
 
 class WebScrapingWorkflow(BaseWorkflow):
+    def __init__(self, code_generator, manifest, sandbox_executor=None, llm_client=None):
+        super().__init__(code_generator, manifest)
+        self.sandbox_executor = sandbox_executor
+        self.llm_client = llm_client
+
+    def get_workflow_type(self):
+        return "web_scraping"
     """
     Workflow for web scraping tasks.
     Uses LLM to analyze page structure and generate scraping scripts.
     """
-
-    def __init__(self, code_generator, sandbox_executor, llm_client=None):
-        super().__init__()
-        self.code_generator = code_generator
-        self.sandbox_executor = sandbox_executor
-        self.llm_client = llm_client
 
     def plan(self, questions: List[str], file_manifest: Dict[str, Any], keywords: List[str], urls: List[str]) -> Dict[str, Any]:
         """

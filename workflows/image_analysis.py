@@ -5,16 +5,17 @@ from workflows.base import BaseWorkflow
 logger = logging.getLogger(__name__)
 
 class ImageAnalysisWorkflow(BaseWorkflow):
+    def __init__(self, code_generator, manifest, sandbox_executor=None, llm_client=None):
+        super().__init__(code_generator=code_generator, manifest=manifest)
+        self.sandbox_executor = sandbox_executor
+        self.llm_client = llm_client
+
+    def get_workflow_type(self):
+        return "image_analysis"
     """
     Workflow for image analysis tasks.
     Supports OCR, basic computer vision, and LLM-guided code generation.
     """
-
-    def __init__(self, code_generator, sandbox_executor, llm_client=None):
-        super().__init__()
-        self.code_generator = code_generator
-        self.sandbox_executor = sandbox_executor
-        self.llm_client = llm_client
 
     def plan(self, questions: List[str], file_manifest: Dict[str, Any], keywords: List[str], image_files: List[str]) -> Dict[str, Any]:
         """

@@ -9,7 +9,11 @@ import sys
 from typing import Dict, List, Any, Optional
 import logging
 from pathlib import Path
-import resource
+try:
+    import resource
+except ImportError:
+    resource = None
+
 import platform
 
 logger = logging.getLogger(__name__)
@@ -119,26 +123,32 @@ class SandboxExecutor:
         # Create requirements.txt if needed
         self._create_requirements_file(temp_dir, code)
     
-    def _wrap_code_with_safety(self, code: str) -> str:
-        """Wrap user code with safety measures and output capture."""
-        
-        wrapped_code = f"""
+def _wrap_code_with_safety(self, code: str) -> str:
+    """Wrap user code with safety measures and output capture."""
+
+    wrapped_code = f"""
 import sys
 import json
 import traceback
 import signal
-import resource
 import os
+import platform
 from contextlib import redirect_stdout, redirect_stderr
 from io import StringIO
 
+# Try importing resource (only works on Linux/Mac)
+try:
+    import resource
+except ImportError:
+    resource = None
+
 # Set resource limits
 def set_limits():
-    # Memory limit (in bytes)
-    resource.setrlimit(resource.RLIMIT_AS, ({self.max_memory_mb * 1024 * 1024}, {self.max_memory_mb * 1024 * 1024}))
-    
-    # CPU time limit (in seconds)
-    resource.setrlimit(resource.RLIMIT_CPU, ({self.max_cpu_time_seconds}, {self.max_cpu_time_seconds}))
+    if resource:
+        # Memory limit (in bytes)
+        resource.setrlimit(resource.RLIMIT_AS, ({self.max_memory_mb * 1024 * 1024}, {self.max_memory_mb * 1024 * 1024}))
+        # CPU time limit (in seconds)
+        resource.setrlimit(resource.RLIMIT_CPU, ({self.max_cpu_time_seconds}, {self.max_cpu_time_seconds}))
 
 # Timeout handler
 def timeout_handler(signum, frame):
@@ -146,65 +156,64 @@ def timeout_handler(signum, frame):
 
 def main():
     try:
-        # Set limits
+        # Set limits if supported
         set_limits()
-        
-        # Set timeout alarm
-        signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm({self.max_cpu_time_seconds})
-        
+
+        # Set timeout alarm (Unix only)
+        if platform.system() != "Windows":
+            signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm({self.max_cpu_time_seconds})
+
         # Capture stdout and stderr
         stdout_capture = StringIO()
         stderr_capture = StringIO()
-        
+
         # Redirect output
         with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
             # User code starts here
-            exec('''
-{code}
-            ''')
-        
+            exec('''{code}''')
+
         # Get captured output
         stdout_content = stdout_capture.getvalue()
         stderr_content = stderr_capture.getvalue()
-        
-        # Clear alarm
-        signal.alarm(0)
-        
+
+        # Clear alarm (if set)
+        if platform.system() != "Windows":
+            signal.alarm(0)
+
         # Write results to files
         with open("stdout.txt", "w") as f:
             f.write(stdout_content)
-            
+
         with open("stderr.txt", "w") as f:
             f.write(stderr_content)
-            
+
         with open("success.txt", "w") as f:
             f.write("true")
-            
+
         # Print final stdout for capture
         print(stdout_content, end="")
-        
+
     except Exception as e:
         error_info = {{
             "error": str(e),
             "type": type(e).__name__,
             "traceback": traceback.format_exc()
         }}
-        
+
         with open("error.json", "w") as f:
             json.dump(error_info, f, indent=2)
-            
+
         with open("success.txt", "w") as f:
             f.write("false")
-            
+
         print(f"ERROR: {{str(e)}}", file=sys.stderr)
 
 if __name__ == "__main__":
     main()
 """
-        
-        return wrapped_code
-    
+    return wrapped_code
+
     def _validate_imports(self, code: str, additional_allowed: Optional[List[str]] = None) -> Dict[str, Any]:
         """Validate that only allowed imports are used."""
         

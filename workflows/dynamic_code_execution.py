@@ -14,12 +14,15 @@ class DynamicCodeExecutionWorkflow(BaseWorkflow):
     and executing Python code dynamically.
     """
     
-    def __init__(self, code_generator: CodeGenerator, sandbox_executor: SandboxExecutor):
-        super().__init__()
+    def __init__(self, code_generator: CodeGenerator, manifest: Dict[str, Any], sandbox_executor: Optional[SandboxExecutor] = None):
+        super().__init__(code_generator=code_generator, manifest=manifest)
         self.code_generator = code_generator
         self.sandbox_executor = sandbox_executor
         self.max_retries = 3
         self.execution_timeout = 180  # 3 minutes
+        
+    def get_workflow_type(self) -> str:
+        return "dynamic_code_execution"
         
     def plan(self, questions: List[str], file_manifest: Dict[str, Any], 
              keywords: List[str], urls: List[str]) -> Dict[str, Any]:
@@ -257,10 +260,7 @@ Return only the corrected Python code:
                 data_sources_info.append(f"Web URL: {source['url']}")
             elif source["type"] == "image":
                 data_sources_info.append(f"Image file: {source['filename']}")
-        
         prompt = f"""
-Generate Python code to answer the following questions:
-
 Questions:
 {chr(10).join(f"- {q}" for q in questions)}
 
