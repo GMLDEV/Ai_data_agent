@@ -191,7 +191,7 @@ import json
 try:
     df = pd.read_csv("{csv_file}")
     print("Data loaded successfully!")
-    print(f"Shape: {df.shape}")
+    print("Shape:", df.shape)
     print("\\nFirst few rows:")
     print(df.head())
     
@@ -201,7 +201,7 @@ try:
     
     final_result = {{
         "message": "Basic CSV analysis completed",
-        "shape": df.shape,
+        "shape": list(df.shape),
         "columns": df.columns.tolist(),
         "summary": "Fallback analysis - LLM code generation failed"
     }}
@@ -210,7 +210,7 @@ try:
     print(json.dumps(final_result, indent=2))
     
 except Exception as e:
-    print(f"Error: {e}")
+    print("Error:", str(e))
     final_result = {{"error": str(e)}}
 '''
         else:
