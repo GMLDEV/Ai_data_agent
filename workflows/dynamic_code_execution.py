@@ -38,6 +38,7 @@ class DynamicCodeExecutionWorkflow(BaseWorkflow):
             - libraries_needed: Python libraries to include
         """
         logger.info("Planning dynamic execution workflow")
+
         if not isinstance(file_manifest, dict):
             if isinstance(file_manifest, list):
                 logger.warning(f"[DynamicCodeExecutionWorkflow.plan] file_manifest is a list, converting to dict: {file_manifest}")
