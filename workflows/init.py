@@ -1,11 +1,17 @@
 from .base import BaseWorkflow
 from .data_analysis import DataAnalysisWorkflow
+from .web_scraping import WebScrapingWorkflow
+from .dynamic_code_execution import DynamicCodeExecutionWorkflow
+from .image_analysis import ImageAnalysisWorkflow
 
 # Workflow registry
 WORKFLOW_REGISTRY = {
     'data_analysis': DataAnalysisWorkflow,
-    'dynamic': DataAnalysisWorkflow,  # Use data analysis as fallback for now
-    # More workflows will be added in future phases
+    'dynamic': DataAnalysisWorkflow,
+    'web_scraping': WebScrapingWorkflow,
+    'dynamic_code_execution': DynamicCodeExecutionWorkflow,
+    'image_analysis': ImageAnalysisWorkflow,
+ 
 }
 
 def get_workflow_class(workflow_name: str):
