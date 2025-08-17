@@ -107,9 +107,21 @@ class SandboxExecutor:
                 
             except Exception as e:
                 logger.error(f"Sandbox execution failed: {e}")
+                logger.error(f"Exception type: {type(e)}")
+                import traceback
+                logger.error(traceback.format_exc())
+                logger.error(f"Type of files: {type(files)}, value: {files}")
+                logger.error(f"Type of allowed_libraries: {type(allowed_libraries)}, value: {allowed_libraries}")
+                logger.error(f"Code to execute:\n{code}")
                 return {
                     "success": False,
                     "error": str(e),
+                    "traceback": traceback.format_exc(),
+                    "code": code,
+                    "files_type": str(type(files)),
+                    "files_value": str(files),
+                    "allowed_libraries_type": str(type(allowed_libraries)),
+                    "allowed_libraries_value": str(allowed_libraries),
                     "output": None,
                     "stdout": "",
                     "stderr": str(e),
