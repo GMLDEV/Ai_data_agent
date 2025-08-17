@@ -14,20 +14,24 @@ class BaseWorkflow(ABC):
         """Return the workflow type identifier"""
         pass
     
-    def plan(self) -> List[str]:
-        """Generate execution plan steps"""
-        return [
-            "Analyze user request and available files",
-            "Generate appropriate Python code", 
-            "Execute code in sandbox environment",
-            "Validate and return results"
-        ]
+    def plan(self, questions: List[str], file_manifest: Dict[str, Any], keywords: List[str] = None, **kwargs) -> Dict[str, Any]:
+        """Generate execution plan steps - base implementation"""
+        return {
+            "steps": [
+                "Analyze user request and available files",
+                "Generate appropriate Python code", 
+                "Execute code in sandbox environment",
+                "Validate and return results"
+            ],
+            "workflow_type": self.get_workflow_type()
+        }
     
-    def generate_code(self, task_description: str, output_format: str = "json") -> str:
-        """Generate Python code for the task"""
+    def generate_code(self, questions: List[str], file_manifest: Dict[str, Any], plan: Dict[str, Any], output_format: str = "json") -> str:
+        """Generate Python code for the task - base implementation"""
+        task_description = " ".join(questions) if isinstance(questions, list) else str(questions)
         return self.code_generator.generate_code(
             task_description=task_description,
-            manifest=self.manifest,
+            manifest=file_manifest,
             workflow_type=self.get_workflow_type(),
             output_format=output_format
         )

@@ -3,7 +3,8 @@ import json
 import re
 from workflows.base import BaseWorkflow
 from core.code_generator import CodeGenerator
-from core.sandbox_executor import SandboxExecutor
+from sandbox.executor import SandboxExecutor
+from core.llm_client import LLMClient
 import logging
 
 logger = logging.getLogger(__name__)
@@ -14,10 +15,11 @@ class DynamicCodeExecutionWorkflow(BaseWorkflow):
     and executing Python code dynamically.
     """
     
-    def __init__(self, code_generator: CodeGenerator, manifest: Dict[str, Any], sandbox_executor: Optional[SandboxExecutor] = None):
+    def __init__(self, code_generator: CodeGenerator, manifest: Dict[str, Any], sandbox_executor: Optional[SandboxExecutor] = None, llm_client=None):
         super().__init__(code_generator=code_generator, manifest=manifest)
         self.code_generator = code_generator
         self.sandbox_executor = sandbox_executor
+        self.llm_client = llm_client or LLMClient()
         self.max_retries = 3
         self.execution_timeout = 180  # 3 minutes
         

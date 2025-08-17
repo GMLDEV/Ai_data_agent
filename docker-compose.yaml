@@ -11,3 +11,20 @@ services:
       - .:/app
     restart: unless-stopped
     command: python main.py
+    depends_on:
+      - ollama
+    environment:
+      - LLM_ENDPOINT=http://ollama:11434/api/generate
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+    command: serve
+
+volumes:
+  ollama_data:

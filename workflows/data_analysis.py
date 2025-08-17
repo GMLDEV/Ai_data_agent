@@ -19,7 +19,7 @@ class DataAnalysisWorkflow(BaseWorkflow):
         if not isinstance(manifest, dict):
             logger.error(f"[DataAnalysisWorkflow.__init__] manifest is not a dict, got {type(manifest)}: {manifest}")
             raise TypeError(f"[DataAnalysisWorkflow.__init__] manifest must be a dict, got {type(manifest)}")
-        self.dynamic_workflow = DynamicCodeExecutionWorkflow(code_generator=code_generator, manifest=manifest, sandbox_executor=sandbox_executor)
+        self.dynamic_workflow = DynamicCodeExecutionWorkflow(code_generator=code_generator, manifest=manifest, sandbox_executor=sandbox_executor, llm_client=llm_client)
         self.sandbox_executor = sandbox_executor
         self.llm_client = llm_client or LLMClient()
 

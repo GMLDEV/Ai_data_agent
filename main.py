@@ -177,12 +177,6 @@ async def process_request(
                 "manifest_type": str(manifest_type)
             }
         )
-
-# Also add this import at the top of main.py
-from core.orchestrator import LLMOrchestrator
-
-# And replace the old component initialization with:
-orchestrator = LLMOrchestrator()
                 
 if __name__ == "__main__":
     logger.info("Starting LLM Orchestrator server...")

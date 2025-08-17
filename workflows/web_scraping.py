@@ -3,14 +3,15 @@ import requests
 from bs4 import BeautifulSoup
 import logging
 from workflows.base import BaseWorkflow
+from core.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
 
 class WebScrapingWorkflow(BaseWorkflow):
     def __init__(self, code_generator, manifest, sandbox_executor=None, llm_client=None):
-        super().__init__(code_generator, manifest)
+        super().__init__(code_generator=code_generator, manifest=manifest)
         self.sandbox_executor = sandbox_executor
-        self.llm_client = llm_client
+        self.llm_client = llm_client or LLMClient()
 
     def get_workflow_type(self):
         return "web_scraping"

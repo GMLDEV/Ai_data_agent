@@ -3,7 +3,7 @@ import logging
 from pathlib import Path
 import json
 import mimetypes
-from core.orchestrator import Orchestrator
+from core.orchestrator import LLMOrchestrator
 from core.classifier import WorkflowClassifier
 
 logger = logging.getLogger(__name__)
@@ -12,7 +12,7 @@ class RequestHandler:
     """
     Enhanced request handler with validation, sanitization, and queueing.
     """
-    def __init__(self, orchestrator: Orchestrator, classifier: WorkflowClassifier):
+    def __init__(self, orchestrator: LLMOrchestrator, classifier: WorkflowClassifier):
         self.orchestrator = orchestrator
         self.classifier = classifier
         self.request_queue = []

@@ -94,7 +94,9 @@ class LLMOrchestrator:
                 workflow = get_workflow(
                     workflow_type,
                     self.code_generator,
-                    manifest
+                    manifest,
+                    sandbox_executor=self.sandbox,
+                    llm_client=None  # Will use default LLMClient in workflows
                 )
                 result = workflow.execute(self.sandbox, questions)
             else:
