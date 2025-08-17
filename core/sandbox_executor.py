@@ -103,6 +103,18 @@ class SandboxExecutor:
                     "artifacts": {}
                 }
     
+    def execute_simple(self, code: str) -> Dict[str, Any]:
+        """
+        Simple execution method for backward compatibility.
+        Uses execute_code with default parameters.
+        """
+        return self.execute_code(
+            code=code,
+            files={},  # No additional files
+            timeout=180,
+            allowed_libraries=None
+        )
+    
     def _setup_sandbox_environment(self, temp_dir: str, files: Dict[str, Any], code: str):
         """Setup the sandbox environment with files and code."""
         
@@ -123,10 +135,10 @@ class SandboxExecutor:
         # Create requirements.txt if needed
         self._create_requirements_file(temp_dir, code)
     
-def _wrap_code_with_safety(self, code: str) -> str:
-    """Wrap user code with safety measures and output capture."""
-
-    wrapped_code = f"""
+    def _wrap_code_with_safety(self, code: str) -> str:
+        """Wrap user code with safety measures and output capture."""
+        
+        wrapped_code = f"""
 import sys
 import json
 import traceback
@@ -212,7 +224,7 @@ def main():
 if __name__ == "__main__":
     main()
 """
-    return wrapped_code
+        return wrapped_code
 
     def _validate_imports(self, code: str, additional_allowed: Optional[List[str]] = None) -> Dict[str, Any]:
         """Validate that only allowed imports are used."""

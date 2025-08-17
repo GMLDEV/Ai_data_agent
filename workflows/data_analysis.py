@@ -27,11 +27,14 @@ class DataAnalysisWorkflow(BaseWorkflow):
         return "data_analysis"
 
     def plan(self, questions: List[str], file_manifest: Dict[str, Any], 
-             keywords: List[str], urls: List[str]) -> Dict[str, Any]:
+             keywords: List[str] = None, urls: List[str] = None) -> Dict[str, Any]:
         """
         Create a specialized plan for data analysis tasks.
         """
         logger.info("Planning data analysis workflow")
+        
+        keywords = keywords or []
+        urls = urls or []
         
         # Start with dynamic workflow plan
         base_plan = self.dynamic_workflow.plan(questions, file_manifest, keywords, urls)
@@ -72,13 +75,10 @@ class DataAnalysisWorkflow(BaseWorkflow):
         data_analysis_prompt = self._build_data_analysis_prompt(questions, file_manifest, plan)
         try:
             code = self.code_generator.generate_code(
-                prompt=data_analysis_prompt,
-                context={
-                    "questions": questions,
-                    "file_manifest": file_manifest,
-                    "plan": plan,
-                    "workflow_type": "data_analysis"
-                }
+                task_description=" ".join(questions),
+                manifest=file_manifest,
+                workflow_type="data_analysis",
+                output_format="json"
             )
             return code
         except Exception as e:
@@ -133,8 +133,10 @@ class DataAnalysisWorkflow(BaseWorkflow):
             "Please fix the code for the data analysis task described in the plan."
         )
         repaired_code = self.code_generator.generate_code(
-            prompt=repair_prompt,
-            context={"plan": plan, "workflow_type": "data_analysis"}
+            task_description=repair_prompt,
+            manifest=self.manifest,
+            workflow_type="data_analysis",
+            output_format="json"
         )
         return repaired_code
 
@@ -186,8 +188,12 @@ class DataAnalysisWorkflow(BaseWorkflow):
         )
         response = self.llm_client.generate(prompt)
         try:
-            return eval(response)
-        except Exception:
+            import json
+            if response.strip().startswith('['):
+                return json.loads(response)
+            else:
+                return []
+        except (json.JSONDecodeError, Exception):
             return []
 
     def _extract_target_variables(self, questions_text: str, file_manifest: Dict[str, Any]) -> List[str]:
@@ -197,29 +203,38 @@ class DataAnalysisWorkflow(BaseWorkflow):
         )
         response = self.llm_client.generate(prompt)
         try:
-            return eval(response)
+            import json
+            if response.strip().startswith('['):
+                return json.loads(response)
+            else:
+                return []
+        except (json.JSONDecodeError, Exception):
+            return []
         except Exception:
             return []
 
     def _infer_column_types(self, csv_file: str) -> Dict[str, str]:
         # Infer column types from the primary CSV file
         try:
+            import pandas as pd
+            # csv_file might be just a filename, make sure it's accessible
             df = pd.read_csv(csv_file, nrows=100)
             return {col: str(dtype) for col, dtype in df.dtypes.items()}
         except Exception as e:
-            logger.warning(f"Could not infer column types: {e}")
+            logger.warning(f"Could not infer column types from {csv_file}: {e}")
             return {}
 
     def _suggest_data_cleaning(self, csv_file: str) -> List[str]:
         # Suggest basic data cleaning steps
         steps = []
         try:
+            import pandas as pd
             df = pd.read_csv(csv_file, nrows=100)
             if df.isnull().any().any():
                 steps.append("Handle missing values")
             # Add more cleaning suggestions as needed
         except Exception as e:
-            logger.warning(f"Could not analyze data cleaning needs: {e}")
+            logger.warning(f"Could not analyze data cleaning needs for {csv_file}: {e}")
         return steps
 
     def _build_data_analysis_prompt(self, questions: List[str], file_manifest: Dict[str, Any], plan: Dict[str, Any]) -> str:

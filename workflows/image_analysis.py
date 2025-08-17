@@ -18,20 +18,27 @@ class ImageAnalysisWorkflow(BaseWorkflow):
     Supports OCR, basic computer vision, and LLM-guided code generation.
     """
 
-    def plan(self, questions: List[str], file_manifest: Dict[str, Any], keywords: List[str], image_files: List[str]) -> Dict[str, Any]:
+    def plan(self, questions: List[str], file_manifest: Dict[str, Any], keywords: List[str] = None, image_files: List[str] = None) -> Dict[str, Any]:
         """
         Analyze requirements and image file types using LLM.
         Return plan with analysis targets (OCR, object detection, etc.).
         """
         logger.info("Planning image analysis workflow")
+        image_files = image_files or []
+        keywords = keywords or []
         if not image_files:
             raise ValueError("No image files provided for image analysis workflow")
         # Build prompt for LLM
         prompt = self._build_image_plan_prompt(questions, image_files)
         plan_text = self.llm_client.generate(prompt)
         try:
-            plan = eval(plan_text) if plan_text.strip().startswith('{') else {'tasks': []}
-        except Exception:
+            import json
+            # Try to parse as JSON first
+            if plan_text.strip().startswith('{'):
+                plan = json.loads(plan_text)
+            else:
+                plan = {'tasks': []}
+        except (json.JSONDecodeError, Exception):
             plan = {'tasks': []}
         plan['image_files'] = image_files
         return plan
@@ -42,12 +49,10 @@ class ImageAnalysisWorkflow(BaseWorkflow):
         """
         prompt = self._build_image_code_prompt(questions, plan)
         code = self.code_generator.generate_code(
-            prompt=prompt,
-            context={
-                "questions": questions,
-                "plan": plan,
-                "workflow_type": "image_analysis"
-            }
+            task_description=" ".join(questions),
+            manifest=file_manifest,
+            workflow_type="image_analysis",
+            output_format="json"
         )
         return code
 
@@ -97,8 +102,10 @@ class ImageAnalysisWorkflow(BaseWorkflow):
             "Please fix the code for the image analysis task described in the plan."
         )
         repaired_code = self.code_generator.generate_code(
-            prompt=repair_prompt,
-            context={"plan": plan, "workflow_type": "image_analysis"}
+            task_description=repair_prompt,
+            manifest=self.manifest,
+            workflow_type="image_analysis",
+            output_format="json"
         )
         return repaired_code
 

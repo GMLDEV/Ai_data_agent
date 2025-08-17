@@ -4,7 +4,7 @@ from .classifier import WorkflowClassifier
 from .file_processor import FileProcessor
 from .code_generator import CodeGenerator
 from workflows.init import get_workflow
-from sandbox.executor import SandboxExecutor
+from .sandbox_executor import SandboxExecutor
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -87,9 +87,11 @@ class LLMOrchestrator:
                 raise TypeError(f"[orchestrator] Manifest must be a dict, got {type(manifest)}")
 
             # Only execute the selected workflow
+            task_description = " ".join(questions) if isinstance(questions, list) else str(questions)
+            
             if workflow_type in self.workflows:
                 workflow = self.workflows[workflow_type]
-                result = workflow.execute(self.sandbox, questions)
+                result = workflow.execute(self.sandbox, task_description)
             elif self.llm_available:
                 workflow = get_workflow(
                     workflow_type,
@@ -98,7 +100,7 @@ class LLMOrchestrator:
                     sandbox_executor=self.sandbox,
                     llm_client=None  # Will use default LLMClient in workflows
                 )
-                result = workflow.execute(self.sandbox, questions)
+                result = workflow.execute(self.sandbox, task_description)
             else:
                 result = self._execute_basic_analysis(manifest, questions)
 

@@ -144,10 +144,20 @@ class OutputValidator:
                 output = json.loads(output)
             
             # Check required fields
+            type_mapping = {
+                'str': str,
+                'int': int,
+                'float': float,
+                'list': list,
+                'dict': dict,
+                'bool': bool
+            }
+            
             for key, value_type in schema.items():
                 if key not in output:
                     return False
-                if not isinstance(output[key], eval(value_type)):
+                expected_type = type_mapping.get(value_type, str)  # Default to str
+                if not isinstance(output[key], expected_type):
                     return False
             
             return True

@@ -27,7 +27,7 @@ class DynamicCodeExecutionWorkflow(BaseWorkflow):
         return "dynamic_code_execution"
         
     def plan(self, questions: List[str], file_manifest: Dict[str, Any], 
-             keywords: List[str], urls: List[str]) -> Dict[str, Any]:
+             keywords: List[str] = None, urls: List[str] = None) -> Dict[str, Any]:
         """
         Analyze the request and create an execution plan.
         
@@ -40,6 +40,9 @@ class DynamicCodeExecutionWorkflow(BaseWorkflow):
             - libraries_needed: Python libraries to include
         """
         logger.info("Planning dynamic execution workflow")
+        
+        keywords = keywords or []
+        urls = urls or []
 
         if not isinstance(file_manifest, dict):
             if isinstance(file_manifest, list):
@@ -112,12 +115,10 @@ class DynamicCodeExecutionWorkflow(BaseWorkflow):
         
         try:
             code = self.code_generator.generate_code(
-                prompt=code_prompt,
-                context={
-                    "questions": questions,
-                    "file_manifest": file_manifest,
-                    "plan": plan
-                }
+                task_description=" ".join(questions),
+                manifest=file_manifest,
+                workflow_type="dynamic_code_execution",
+                output_format=plan.get("output_format", "json")
             )
             logger.info("Generated code successfully")
             return code
@@ -256,12 +257,10 @@ Return only the corrected Python code:
         
         try:
             fixed_code = self.code_generator.generate_code(
-                prompt=repair_prompt,
-                context={
-                    "original_code": code,
-                    "error": error_info,
-                    "plan": plan
-                }
+                task_description=repair_prompt,
+                manifest=self.manifest,
+                workflow_type="dynamic_code_execution",
+                output_format=plan.get("output_format", "json")
             )
             logger.info("Code repaired successfully")
             return fixed_code

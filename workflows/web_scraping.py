@@ -20,7 +20,7 @@ class WebScrapingWorkflow(BaseWorkflow):
     Uses LLM to analyze page structure and generate scraping scripts.
     """
 
-    def plan(self, questions: List[str], file_manifest: Dict[str, Any], keywords: List[str], urls: List[str]) -> Dict[str, Any]:
+    def plan(self, questions: List[str], file_manifest: Dict[str, Any], keywords: List[str] = None, urls: List[str] = None) -> Dict[str, Any]:
         if not isinstance(file_manifest, dict):
             logger.error(f"[plan] file_manifest is not a dict, got {type(file_manifest)}: {file_manifest}")
             raise TypeError(f"[plan] file_manifest must be a dict, got {type(file_manifest)}")
@@ -30,6 +30,8 @@ class WebScrapingWorkflow(BaseWorkflow):
         Return plan with extraction targets, navigation steps, etc.
         """
         logger.info("Planning web scraping workflow")
+        urls = urls or []
+        keywords = keywords or []
         if not urls:
             raise ValueError("No URLs provided for web scraping workflow")
         # Fetch HTML for each URL
@@ -46,8 +48,13 @@ class WebScrapingWorkflow(BaseWorkflow):
         prompt = self._build_scraping_plan_prompt(questions, urls, html_summaries)
         plan_text = self.llm_client.generate(prompt)
         try:
-            plan = eval(plan_text) if plan_text.strip().startswith('{') else {'targets': [], 'navigation': []}
-        except Exception:
+            import json
+            # Try to parse as JSON first
+            if plan_text.strip().startswith('{'):
+                plan = json.loads(plan_text)
+            else:
+                plan = {'targets': [], 'navigation': []}
+        except (json.JSONDecodeError, Exception):
             plan = {'targets': [], 'navigation': []}
         plan['urls'] = urls
         plan['html_summaries'] = html_summaries
@@ -62,12 +69,10 @@ class WebScrapingWorkflow(BaseWorkflow):
         """
         prompt = self._build_scraping_code_prompt(questions, plan)
         code = self.code_generator.generate_code(
-            prompt=prompt,
-            context={
-                "questions": questions,
-                "plan": plan,
-                "workflow_type": "web_scraping"
-            }
+            task_description=" ".join(questions),
+            manifest=file_manifest,
+            workflow_type="web_scraping",
+            output_format="json"
         )
         return code
 
@@ -120,8 +125,10 @@ class WebScrapingWorkflow(BaseWorkflow):
             "Please fix the code for the web scraping task described in the plan."
         )
         repaired_code = self.code_generator.generate_code(
-            prompt=repair_prompt,
-            context={"plan": plan, "workflow_type": "web_scraping"}
+            task_description=repair_prompt,
+            manifest=self.manifest,
+            workflow_type="web_scraping",
+            output_format="json"
         )
         return repaired_code
 
