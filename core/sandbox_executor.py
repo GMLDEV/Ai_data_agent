@@ -178,10 +178,12 @@ except ImportError:
 # Set resource limits
 def set_limits():
     if resource:
-        # Memory limit (in bytes)
-        resource.setrlimit(resource.RLIMIT_AS, ({self.max_memory_mb * 1024 * 1024}, {self.max_memory_mb * 1024 * 1024}))
+        # Memory limit (in bytes) - ensure integer values
+        memory_limit = int({self.max_memory_mb * 1024 * 1024})
+        cpu_limit = int({self.max_cpu_time_seconds})
+        resource.setrlimit(resource.RLIMIT_AS, (memory_limit, memory_limit))
         # CPU time limit (in seconds)
-        resource.setrlimit(resource.RLIMIT_CPU, ({self.max_cpu_time_seconds}, {self.max_cpu_time_seconds}))
+        resource.setrlimit(resource.RLIMIT_CPU, (cpu_limit, cpu_limit))
 
 # Timeout handler
 def timeout_handler(signum, frame):
@@ -224,7 +226,7 @@ def main():
         # Set timeout alarm (Unix only)
         if platform.system() != "Windows":
             signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm({self.max_cpu_time_seconds})
+            signal.alarm(int({self.max_cpu_time_seconds}))
 
         # Capture stdout and stderr
         stdout_capture = StringIO()
