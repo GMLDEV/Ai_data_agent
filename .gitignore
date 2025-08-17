@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+
+# Virtual environments
+venv/
+env/
+.env/
+.venv/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# VS Code settings
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs and temp files
+*.log
+*.tmp
+
+# Test output
+htmlcov/
+coverage.xml
+*.cover
+
+# Environment variables
+.env
+
+# Package distribution
+dist/
+build/
+*.egg-info/
+
+# Ignore result files/artifacts
+*.png
+*.jpg
+*.jpeg
+*.csv
+*.json
+
+# Ignore requirements lock files (optional)
+poetry.lock
+Pipfile.lock
