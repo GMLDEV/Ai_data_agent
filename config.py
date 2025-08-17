@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     supported_file_types: List[str] = ['.csv', '.txt', '.png', '.jpg', '.jpeg']
     
     # Sandbox limits
-    sandbox_memory_limit: int = 1024 * 1024 * 1024  # 1GB
+    sandbox_memory_limit: int = 1024 * 1024 * 1024 * 2  # 2GB
     sandbox_cpu_limit: float = 2.0
     
     # Server settings
