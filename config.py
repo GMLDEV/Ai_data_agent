@@ -1,10 +1,10 @@
 import os
 from pydantic_settings import BaseSettings
+from pydantic import Field
 from typing import List
 
 class Settings(BaseSettings):
-    # API Keys (will add OpenAI later in Phase 2)
-    openai_api_key: str = ""
+    openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     
     # Execution limits
     max_execution_time: int = 180  # 3 minutes
