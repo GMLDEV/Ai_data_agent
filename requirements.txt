@@ -1,0 +1,19 @@
+
+fastapi
+uvicorn
+pandas
+numpy
+python-multipart
+pydantic
+psutil
+pillow
+requests
+python-dotenv
+beautifulsoup4
+bs4
+# Add to existing requirements.txt
+langchain
+langchain-openai
+openai
+langchain-community
+tiktoken

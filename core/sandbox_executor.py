@@ -1,0 +1,500 @@
+import subprocess
+import tempfile
+import os
+import shutil
+import json
+import signal
+import time
+import sys
+from typing import Dict, List, Any, Optional
+import logging
+from pathlib import Path
+import resource
+import platform
+
+logger = logging.getLogger(__name__)
+
+class SandboxExecutor:
+    """
+    Secure sandbox executor for running Python code with resource limits
+    and restricted environment.
+    """
+    
+    def __init__(self, 
+                 max_memory_mb: int = 512,
+                 max_cpu_time_seconds: int = 180,
+                 allowed_imports: Optional[List[str]] = None):
+        """
+        Initialize sandbox executor.
+        
+        Args:
+            max_memory_mb: Maximum memory usage in MB
+            max_cpu_time_seconds: Maximum CPU time in seconds
+            allowed_imports: List of allowed import modules
+        """
+        self.max_memory_mb = max_memory_mb
+        self.max_cpu_time_seconds = max_cpu_time_seconds
+        self.allowed_imports = allowed_imports or [
+            'pandas', 'numpy', 'matplotlib', 'seaborn', 'requests', 
+            'beautifulsoup4', 'bs4', 'json', 'csv', 'os', 'sys', 
+            'datetime', 'time', 're', 'math', 'PIL', 'cv2', 'scipy'
+        ]
+        
+        # Create base sandbox template
+        self.sandbox_template = self._create_sandbox_template()
+        
+    def execute_code(self, 
+                    code: str, 
+                    files: Dict[str, Any], 
+                    timeout: int = 180,
+                    allowed_libraries: Optional[List[str]] = None) -> Dict[str, Any]:
+        """
+        Execute Python code in a sandboxed environment.
+        
+        Args:
+            code: Python code to execute
+            files: Dictionary of files to make available
+            timeout: Execution timeout in seconds
+            allowed_libraries: Additional allowed libraries for this execution
+            
+        Returns:
+            Dict with execution results
+        """
+        
+        # Create temporary directory for execution
+        with tempfile.TemporaryDirectory() as temp_dir:
+            try:
+                # Setup sandbox environment
+                self._setup_sandbox_environment(temp_dir, files, code)
+                
+                # Validate imports
+                validation_result = self._validate_imports(code, allowed_libraries)
+                if not validation_result["valid"]:
+                    return {
+                        "success": False,
+                        "error": f"Unauthorized imports: {', '.join(validation_result['unauthorized'])}",
+                        "output": None,
+                        "stdout": "",
+                        "stderr": validation_result["error"],
+                        "artifacts": {}
+                    }
+                
+                # Execute code
+                result = self._run_code_in_sandbox(temp_dir, timeout)
+                
+                # Collect artifacts (plots, files generated)
+                artifacts = self._collect_artifacts(temp_dir)
+                result["artifacts"] = artifacts
+                
+                return result
+                
+            except Exception as e:
+                logger.error(f"Sandbox execution failed: {e}")
+                return {
+                    "success": False,
+                    "error": str(e),
+                    "output": None,
+                    "stdout": "",
+                    "stderr": str(e),
+                    "artifacts": {}
+                }
+    
+    def _setup_sandbox_environment(self, temp_dir: str, files: Dict[str, Any], code: str):
+        """Setup the sandbox environment with files and code."""
+        
+        # Copy uploaded files to sandbox
+        for filename, file_info in files.items():
+            if "path" in file_info:
+                src_path = file_info["path"]
+                dst_path = os.path.join(temp_dir, filename)
+                shutil.copy2(src_path, dst_path)
+                logger.info(f"Copied file {filename} to sandbox")
+        
+        # Create the main execution script
+        main_script = self._wrap_code_with_safety(code)
+        
+        with open(os.path.join(temp_dir, "main.py"), "w") as f:
+            f.write(main_script)
+        
+        # Create requirements.txt if needed
+        self._create_requirements_file(temp_dir, code)
+    
+    def _wrap_code_with_safety(self, code: str) -> str:
+        """Wrap user code with safety measures and output capture."""
+        
+        wrapped_code = f"""
+import sys
+import json
+import traceback
+import signal
+import resource
+import os
+from contextlib import redirect_stdout, redirect_stderr
+from io import StringIO
+
+# Set resource limits
+def set_limits():
+    # Memory limit (in bytes)
+    resource.setrlimit(resource.RLIMIT_AS, ({self.max_memory_mb * 1024 * 1024}, {self.max_memory_mb * 1024 * 1024}))
+    
+    # CPU time limit (in seconds)
+    resource.setrlimit(resource.RLIMIT_CPU, ({self.max_cpu_time_seconds}, {self.max_cpu_time_seconds}))
+
+# Timeout handler
+def timeout_handler(signum, frame):
+    raise TimeoutError("Code execution timed out")
+
+def main():
+    try:
+        # Set limits
+        set_limits()
+        
+        # Set timeout alarm
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm({self.max_cpu_time_seconds})
+        
+        # Capture stdout and stderr
+        stdout_capture = StringIO()
+        stderr_capture = StringIO()
+        
+        # Redirect output
+        with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
+            # User code starts here
+            exec('''
+{code}
+            ''')
+        
+        # Get captured output
+        stdout_content = stdout_capture.getvalue()
+        stderr_content = stderr_capture.getvalue()
+        
+        # Clear alarm
+        signal.alarm(0)
+        
+        # Write results to files
+        with open("stdout.txt", "w") as f:
+            f.write(stdout_content)
+            
+        with open("stderr.txt", "w") as f:
+            f.write(stderr_content)
+            
+        with open("success.txt", "w") as f:
+            f.write("true")
+            
+        # Print final stdout for capture
+        print(stdout_content, end="")
+        
+    except Exception as e:
+        error_info = {{
+            "error": str(e),
+            "type": type(e).__name__,
+            "traceback": traceback.format_exc()
+        }}
+        
+        with open("error.json", "w") as f:
+            json.dump(error_info, f, indent=2)
+            
+        with open("success.txt", "w") as f:
+            f.write("false")
+            
+        print(f"ERROR: {{str(e)}}", file=sys.stderr)
+
+if __name__ == "__main__":
+    main()
+"""
+        
+        return wrapped_code
+    
+    def _validate_imports(self, code: str, additional_allowed: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Validate that only allowed imports are used."""
+        
+        allowed = set(self.allowed_imports)
+        if additional_allowed:
+            allowed.update(additional_allowed)
+        
+        # Extract import statements
+        import re
+        import_pattern = r'^(?:from\s+(\S+)\s+import|import\s+(\S+))'
+        
+        unauthorized_imports = []
+        
+        for line in code.split('\n'):
+            line = line.strip()
+            if line.startswith(('import ', 'from ')):
+                match = re.match(import_pattern, line)
+                if match:
+                    module = match.group(1) or match.group(2)
+                    # Get base module name (before any dots)
+                    base_module = module.split('.')[0]
+                    
+                    if base_module not in allowed:
+                        unauthorized_imports.append(base_module)
+        
+        return {
+            "valid": len(unauthorized_imports) == 0,
+            "unauthorized": list(set(unauthorized_imports)),
+            "error": f"Unauthorized imports found: {', '.join(set(unauthorized_imports))}" if unauthorized_imports else None
+        }
+    
+    def _run_code_in_sandbox(self, temp_dir: str, timeout: int) -> Dict[str, Any]:
+        """Run the code in the sandbox and capture results."""
+        
+        try:
+            # Change to sandbox directory
+            original_cwd = os.getcwd()
+            os.chdir(temp_dir)
+            
+            # Set up environment variables for security
+            env = os.environ.copy()
+            env['PYTHONPATH'] = temp_dir
+            env['HOME'] = temp_dir
+            
+            # Run the code
+            if platform.system() == "Windows":
+                # Windows doesn't support os.setsid
+                process = subprocess.Popen(
+                    [sys.executable, "main.py"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env=env,
+                    cwd=temp_dir
+                )
+            else:
+                process = subprocess.Popen(
+                    [sys.executable, "main.py"],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    env=env,
+                    cwd=temp_dir,
+                    preexec_fn=os.setsid  # Create new process group
+                )
+            
+            try:
+                stdout, stderr = process.communicate(timeout=timeout)
+                return_code = process.returncode
+                
+            except subprocess.TimeoutExpired:
+                # Kill the process group (Unix) or terminate process (Windows)
+                if platform.system() == "Windows":
+                    process.terminate()
+                else:
+                    os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                
+                try:
+                    stdout, stderr = process.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    if platform.system() == "Windows":
+                        process.kill()
+                    else:
+                        os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                    stdout, stderr = process.communicate()
+                
+                return {
+                    "success": False,
+                    "error": f"Execution timed out after {timeout} seconds",
+                    "output": None,
+                    "stdout": stdout or "",
+                    "stderr": stderr or "Execution timed out"
+                }
+            
+            finally:
+                os.chdir(original_cwd)
+            
+            # Check if execution was successful
+            success_file = os.path.join(temp_dir, "success.txt")
+            success = False
+            
+            if os.path.exists(success_file):
+                with open(success_file, "r") as f:
+                    success = f.read().strip() == "true"
+            
+            # Read captured output files
+            stdout_file = os.path.join(temp_dir, "stdout.txt")
+            stderr_file = os.path.join(temp_dir, "stderr.txt")
+            error_file = os.path.join(temp_dir, "error.json")
+            
+            captured_stdout = ""
+            captured_stderr = ""
+            error_details = None
+            
+            if os.path.exists(stdout_file):
+                with open(stdout_file, "r") as f:
+                    captured_stdout = f.read()
+            
+            if os.path.exists(stderr_file):
+                with open(stderr_file, "r") as f:
+                    captured_stderr = f.read()
+            
+            if os.path.exists(error_file):
+                with open(error_file, "r") as f:
+                    error_details = json.load(f)
+            
+            # Determine final output
+            output = captured_stdout.strip() if captured_stdout.strip() else None
+            
+            # Try to parse JSON output
+            if output:
+                try:
+                    output = json.loads(output)
+                except json.JSONDecodeError:
+                    pass  # Keep as string
+            
+            return {
+                "success": success and return_code == 0,
+                "error": error_details["error"] if error_details else None,
+                "output": output,
+                "stdout": captured_stdout,
+                "stderr": captured_stderr,
+                "return_code": return_code
+            }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "output": None,
+                "stdout": "",
+                "stderr": str(e),
+                "return_code": -1
+            }
+    
+    def _collect_artifacts(self, temp_dir: str) -> Dict[str, Any]:
+        """Collect any artifacts (plots, files) generated during execution."""
+        
+        artifacts = {
+            "plots": [],
+            "files": []
+        }
+        
+        # Look for common plot file extensions
+        plot_extensions = ['.png', '.jpg', '.jpeg', '.svg', '.pdf']
+        
+        for file_path in Path(temp_dir).iterdir():
+            if file_path.is_file():
+                file_ext = file_path.suffix.lower()
+                
+                # Skip system files
+                if file_path.name in ['main.py', 'stdout.txt', 'stderr.txt', 'success.txt', 'error.json']:
+                    continue
+                
+                if file_ext in plot_extensions:
+                    # Read plot file
+                    try:
+                        with open(file_path, 'rb') as f:
+                            artifacts["plots"].append({
+                                "filename": file_path.name,
+                                "size": file_path.stat().st_size,
+                                "type": file_ext[1:]  # Remove the dot
+                            })
+                        logger.info(f"Collected plot artifact: {file_path.name}")
+                    except Exception as e:
+                        logger.warning(f"Failed to read plot file {file_path}: {e}")
+                
+                else:
+                    # Other generated files
+                    artifacts["files"].append({
+                        "filename": file_path.name,
+                        "size": file_path.stat().st_size,
+                        "type": file_ext[1:] if file_ext else "unknown"
+                    })
+        
+        return artifacts
+    
+    def _create_requirements_file(self, temp_dir: str, code: str):
+        """Create requirements.txt based on detected imports."""
+        
+        # Map import names to package names
+        package_mapping = {
+            'pandas': 'pandas',
+            'numpy': 'numpy', 
+            'matplotlib': 'matplotlib',
+            'seaborn': 'seaborn',
+            'requests': 'requests',
+            'bs4': 'beautifulsoup4',
+            'beautifulsoup4': 'beautifulsoup4',
+            'PIL': 'Pillow',
+            'cv2': 'opencv-python',
+            'scipy': 'scipy'
+        }
+        
+        # Extract imports from code
+        imports = set()
+        for line in code.split('\n'):
+            line = line.strip()
+            if line.startswith('import '):
+                module = line.replace('import ', '').split('.')[0].split(' as ')[0]
+                imports.add(module)
+            elif line.startswith('from '):
+                module = line.split(' ')[1].split('.')[0]
+                imports.add(module)
+        
+        # Create requirements.txt
+        requirements = []
+        for imp in imports:
+            if imp in package_mapping:
+                requirements.append(package_mapping[imp])
+        
+        if requirements:
+            requirements_path = os.path.join(temp_dir, "requirements.txt")
+            with open(requirements_path, "w") as f:
+                f.write('\n'.join(requirements))
+    
+    def _create_sandbox_template(self) -> str:
+        """Create a template for the sandbox environment."""
+        
+        template = """
+# Sandbox Environment Template
+# This template provides a secure execution environment for user code
+
+import sys
+import os
+
+# Restrict certain dangerous operations
+import builtins
+
+# Override dangerous built-ins
+original_open = builtins.open
+original_exec = builtins.exec
+original_eval = builtins.eval
+
+def safe_open(file, mode='r', **kwargs):
+    # Restrict file operations to current directory
+    if os.path.isabs(file):
+        raise PermissionError("Absolute paths not allowed")
+    if '..' in file:
+        raise PermissionError("Path traversal not allowed")
+    return original_open(file, mode, **kwargs)
+
+# Replace built-ins
+builtins.open = safe_open
+
+print("Sandbox environment initialized")
+"""
+        return template
+
+# Example usage for testing
+if __name__ == "__main__":
+    executor = SandboxExecutor()
+    
+    test_code = '''
+import pandas as pd
+import json
+
+# Create sample data
+data = {"name": ["Alice", "Bob", "Charlie"], "age": [25, 30, 35]}
+df = pd.DataFrame(data)
+
+# Analyze data
+result = {
+    "mean_age": df["age"].mean(),
+    "count": len(df),
+    "summary": df.describe().to_dict()
+}
+
+print(json.dumps(result, indent=2))
+'''
+    
+    result = executor.execute_code(test_code, {})
+    print("Execution result:", result)
