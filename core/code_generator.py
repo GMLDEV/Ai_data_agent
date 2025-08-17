@@ -122,6 +122,11 @@ Generate ONLY the corrected Python code, no explanations:
         
         summaries = []
         for filename, info in manifest['files'].items():
+            # Ensure info is a dictionary
+            if not isinstance(info, dict):
+                summaries.append(f"- {filename}: unknown file (invalid format)")
+                continue
+                
             file_type = info.get('type', 'unknown')
             
             if file_type == 'csv':
@@ -166,7 +171,16 @@ Generate ONLY the corrected Python code, no explanations:
     
     def _generate_fallback_code(self, task_description: str, manifest: Dict[str, Any]) -> str:
         """Generate basic fallback code when LLM fails"""
-        if manifest.get('files') and any(f.get('type') == 'csv' for f in manifest['files'].values()):
+        files = manifest.get('files', {})
+        has_csv = False
+        
+        # Check for CSV files with proper validation
+        for filename, file_info in files.items():
+            if isinstance(file_info, dict) and file_info.get('type') == 'csv':
+                has_csv = True
+                break
+        
+        if has_csv:
             # CSV analysis fallback
             csv_file = next((name for name, info in manifest['files'].items() if info.get('type') == 'csv'), None)
             return f'''

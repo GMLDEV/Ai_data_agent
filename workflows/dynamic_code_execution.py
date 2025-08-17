@@ -62,6 +62,11 @@ class DynamicCodeExecutionWorkflow(BaseWorkflow):
         
         # Analyze file manifest
         for filename, file_info in file_manifest.items():
+            # Ensure file_info is a dictionary
+            if not isinstance(file_info, dict):
+                logger.warning(f"Skipping file {filename}: file_info is not a dict, got {type(file_info)}")
+                continue
+                
             if file_info.get("type") == "csv":
                 plan["data_sources"].append({
                     "type": "csv",
@@ -131,7 +136,16 @@ class DynamicCodeExecutionWorkflow(BaseWorkflow):
         """Execute the workflow: build plan, generate code, and run with retry/repair."""
         questions = [task_description]
         file_manifest = self.manifest
-        plan = self.plan(questions, file_manifest, keywords=[], urls=file_manifest.get('urls', []))
+        
+        # Ensure URLs are properly handled
+        urls = file_manifest.get('urls', [])
+        if not isinstance(urls, (list, tuple)):
+            if isinstance(urls, str):
+                urls = [urls]
+            else:
+                urls = []
+                
+        plan = self.plan(questions, file_manifest, keywords=[], urls=urls)
 
         code = self.generate_code(questions, file_manifest, plan)
 
@@ -145,11 +159,26 @@ class DynamicCodeExecutionWorkflow(BaseWorkflow):
 
                 # Prefer execute_code if available for richer options
                 if hasattr(executor, 'execute_code'):
+                    # Ensure libraries_needed is a proper list
+                    libraries_needed = plan.get('libraries_needed', [])
+                    if not isinstance(libraries_needed, (list, tuple)):
+                        if isinstance(libraries_needed, str):
+                            libraries_needed = [libraries_needed]
+                        else:
+                            libraries_needed = []
+                    
+                    # Ensure file_manifest has the right structure for sandbox
+                    sandbox_files = {}
+                    if isinstance(file_manifest, dict):
+                        for filename, file_info in file_manifest.items():
+                            if isinstance(file_info, dict) and "path" in file_info:
+                                sandbox_files[filename] = file_info
+                    
                     result = executor.execute_code(
                         code=code,
-                        files=file_manifest,
+                        files=sandbox_files,
                         timeout=self.execution_timeout,
-                        allowed_libraries=plan.get('libraries_needed', [])
+                        allowed_libraries=libraries_needed
                     )
                 else:
                     result = executor.execute_simple(code)
@@ -276,6 +305,11 @@ Return only the corrected Python code:
         
         files_info = []
         for filename, file_info in file_manifest.items():
+            # Ensure file_info is a dictionary
+            if not isinstance(file_info, dict):
+                files_info.append(f"- {filename}: unknown file (invalid format)")
+                continue
+                
             files_info.append(f"- {filename}: {file_info.get('type', 'unknown')} file")
             if file_info.get('columns'):
                 files_info.append(f"  Columns: {', '.join(file_info['columns'][:5])}")  # First 5 columns

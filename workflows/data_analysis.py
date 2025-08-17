@@ -93,24 +93,42 @@ class DataAnalysisWorkflow(BaseWorkflow):
         """
         logger.info("Executing data analysis workflow")
 
-        questions = [task_description]
-        file_manifest = self.manifest
+        try:
+            questions = [task_description]
+            file_manifest = self.manifest
 
-        # Build the plan and generate code
-        plan = self.plan(questions, file_manifest, keywords=[], urls=file_manifest.get('urls', []))
-        code = self.generate_code(questions, file_manifest, plan)
+            # Ensure URLs are properly handled
+            urls = file_manifest.get('urls', [])
+            if not isinstance(urls, (list, tuple)):
+                if isinstance(urls, str):
+                    urls = [urls]
+                else:
+                    urls = []
 
-        executor = sandbox_executor or self.sandbox_executor
-        if executor is None:
-            raise RuntimeError("No sandbox executor available for DataAnalysisWorkflow")
+            # Build the plan and generate code
+            plan = self.plan(questions, file_manifest, keywords=[], urls=urls)
+            code = self.generate_code(questions, file_manifest, plan)
 
-        result = executor.execute_simple(code)
+            executor = sandbox_executor or self.sandbox_executor
+            if executor is None:
+                raise RuntimeError("No sandbox executor available for DataAnalysisWorkflow")
 
-        return {
-            "success": result.get("success", False),
-            "result": result,
-            "workflow": self.get_workflow_type()
-        }
+            result = executor.execute_simple(code)
+
+            return {
+                "success": result.get("success", False),
+                "result": result,
+                "workflow": self.get_workflow_type()
+            }
+            
+        except Exception as e:
+            logger.error(f"Data analysis workflow execution failed: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "result": {"success": False, "error": str(e)},
+                "workflow": self.get_workflow_type()
+            }
 
     def validate(self, result: Dict[str, Any], plan: Dict[str, Any]) -> bool:
         """Validate output format and constraints."""

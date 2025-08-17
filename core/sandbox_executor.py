@@ -65,6 +65,19 @@ class SandboxExecutor:
             Dict with execution results
         """
         
+        # Validate and normalize parameters
+        if not isinstance(files, dict):
+            logger.error(f"Files parameter must be a dictionary, got {type(files)}: {files}")
+            if files is None:
+                files = {}
+            elif isinstance(files, (list, tuple)):
+                files = {f"file_{i}": f for i, f in enumerate(files)}
+            elif isinstance(files, (str, int)):
+                logger.error(f"Cannot convert {type(files)} to dictionary: {files}")
+                files = {}
+            else:
+                files = {}
+        
         # Create temporary directory for execution
         with tempfile.TemporaryDirectory() as temp_dir:
             try:
@@ -120,11 +133,20 @@ class SandboxExecutor:
         
         # Copy uploaded files to sandbox
         for filename, file_info in files.items():
+            # Ensure file_info is a dictionary
+            if not isinstance(file_info, dict):
+                logger.warning(f"Skipping file {filename}: file_info is not a dict, got {type(file_info)}")
+                continue
+                
             if "path" in file_info:
                 src_path = file_info["path"]
                 dst_path = os.path.join(temp_dir, filename)
-                shutil.copy2(src_path, dst_path)
-                logger.info(f"Copied file {filename} to sandbox")
+                try:
+                    shutil.copy2(src_path, dst_path)
+                    logger.info(f"Copied file {filename} to sandbox")
+                except Exception as e:
+                    logger.warning(f"Failed to copy file {filename}: {e}")
+                    continue
         
         # Create the main execution script
         main_script = self._wrap_code_with_safety(code)
@@ -231,6 +253,12 @@ if __name__ == "__main__":
         
         allowed = set(self.allowed_imports)
         if additional_allowed:
+            # Ensure additional_allowed is iterable
+            if isinstance(additional_allowed, str):
+                additional_allowed = [additional_allowed]
+            elif not isinstance(additional_allowed, (list, tuple, set)):
+                logger.error(f"additional_allowed must be iterable, got {type(additional_allowed)}: {additional_allowed}")
+                additional_allowed = []
             allowed.update(additional_allowed)
         
         # Extract import statements

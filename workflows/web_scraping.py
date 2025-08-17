@@ -32,6 +32,15 @@ class WebScrapingWorkflow(BaseWorkflow):
         logger.info("Planning web scraping workflow")
         urls = urls or []
         keywords = keywords or []
+        
+        # Ensure URLs is iterable
+        if not isinstance(urls, (list, tuple)):
+            if isinstance(urls, str):
+                urls = [urls]
+            else:
+                logger.error(f"URLs must be iterable, got {type(urls)}: {urls}")
+                raise TypeError(f"URLs must be a list or tuple, got {type(urls)}")
+        
         if not urls:
             raise ValueError("No URLs provided for web scraping workflow")
         # Fetch HTML for each URL
@@ -80,26 +89,49 @@ class WebScrapingWorkflow(BaseWorkflow):
         """Execute the web scraping workflow using the provided sandbox executor."""
         logger.info("Executing web scraping workflow")
 
-        questions = [task_description]
-        file_manifest = self.manifest
-        if not isinstance(file_manifest, dict):
-            logger.error(f"file_manifest is not a dict, got {type(file_manifest)}: {file_manifest}")
-            raise TypeError(f"file_manifest must be a dict, got {type(file_manifest)}")
-        urls = file_manifest.get('urls', [])
+        try:
+            questions = [task_description]
+            file_manifest = self.manifest
+            if not isinstance(file_manifest, dict):
+                logger.error(f"file_manifest is not a dict, got {type(file_manifest)}: {file_manifest}")
+                raise TypeError(f"file_manifest must be a dict, got {type(file_manifest)}")
+            
+            # Extract URLs with proper error handling
+            urls = file_manifest.get('urls', [])
+            if not isinstance(urls, list):
+                logger.error(f"URLs should be a list, got {type(urls)}: {urls}")
+                # Try to convert to list if it's a single URL string
+                if isinstance(urls, str):
+                    urls = [urls]
+                elif isinstance(urls, int):
+                    raise TypeError(f"URLs cannot be an integer: {urls}")
+                else:
+                    urls = []
+            
+            logger.info(f"Processing {len(urls)} URLs: {urls}")
 
-        plan = self.plan(questions, file_manifest, keywords=[], urls=urls)
-        code = self.generate_code(questions, file_manifest, plan)
+            plan = self.plan(questions, file_manifest, keywords=[], urls=urls)
+            code = self.generate_code(questions, file_manifest, plan)
 
-        executor = sandbox_executor or self.sandbox_executor
-        if executor is None:
-            raise RuntimeError("No sandbox executor available for WebScrapingWorkflow")
+            executor = sandbox_executor or self.sandbox_executor
+            if executor is None:
+                raise RuntimeError("No sandbox executor available for WebScrapingWorkflow")
 
-        result = executor.execute_simple(code)
-        return {
-            "success": result.get("success", False),
-            "result": result,
-            "workflow": self.get_workflow_type()
-        }
+            result = executor.execute_simple(code)
+            return {
+                "success": result.get("success", False),
+                "result": result,
+                "workflow": self.get_workflow_type()
+            }
+            
+        except Exception as e:
+            logger.error(f"Web scraping workflow execution failed: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "result": {"success": False, "error": str(e)},
+                "workflow": self.get_workflow_type()
+            }
 
     def validate(self, result: Dict[str, Any], plan: Dict[str, Any]) -> bool:
         """
