@@ -184,12 +184,21 @@ class DynamicCodeExecutionWorkflow(BaseWorkflow):
                     result = executor.execute_simple(code)
 
                 if result.get('success'):
-                    logger.info("Code executed successfully")
-                    return {
+                    logger.info(f"Code executed successfully on attempt {attempt + 1}")
+                    enhanced_result = {
                         "success": True,
                         "result": result,
-                        "workflow": self.get_workflow_type()
+                        "workflow": self.get_workflow_type(),
+                        "retry_count": result.get("retry_count", attempt),
+                        "was_fixed_by_llm": result.get("retry_count", attempt) > 0,
+                        "original_code": code if attempt == 0 else None,
+                        "final_code": result.get("fixed_code", code)
                     }
+                    
+                    if result.get("retry_count", 0) > 0 or attempt > 0:
+                        logger.info(f"Code was successfully executed after {max(result.get('retry_count', 0), attempt)} attempts")
+                    
+                    return enhanced_result
                 else:
                     logger.warning(f"Execution failed: {result.get('error', 'Unknown error')}")
                     if attempt < self.max_retries:

@@ -50,7 +50,7 @@ class SandboxExecutor:
                     timeout: int = 180,
                     allowed_libraries: Optional[List[str]] = None) -> Dict[str, Any]:
         """
-        Execute Python code in a sandboxed environment.
+        Execute Python code in a sandboxed environment with intelligent error recovery.
         
         Args:
             code: Python code to execute
@@ -75,45 +75,8 @@ class SandboxExecutor:
             else:
                 files = {}
         
-        # Create temporary directory for execution
-        with tempfile.TemporaryDirectory() as temp_dir:
-            try:
-                # Setup sandbox environment
-                self._setup_sandbox_environment(temp_dir, files, code)
-                
-                # No import validation - allow all imports
-                
-                # Execute code
-                result = self._run_code_in_sandbox(temp_dir, timeout)
-                
-                # Collect artifacts (plots, files generated)
-                artifacts = self._collect_artifacts(temp_dir)
-                result["artifacts"] = artifacts
-                
-                return result
-                
-            except Exception as e:
-                logger.error(f"Sandbox execution failed: {e}")
-                logger.error(f"Exception type: {type(e)}")
-                import traceback
-                logger.error(traceback.format_exc())
-                logger.error(f"Type of files: {type(files)}, value: {files}")
-                logger.error(f"Type of allowed_libraries: {type(allowed_libraries)}, value: {allowed_libraries}")
-                logger.error(f"Code to execute:\n{code}")
-                return {
-                    "success": False,
-                    "error": str(e),
-                    "traceback": traceback.format_exc(),
-                    "code": code,
-                    "files_type": str(type(files)),
-                    "files_value": str(files),
-                    "allowed_libraries_type": str(type(allowed_libraries)),
-                    "allowed_libraries_value": str(allowed_libraries),
-                    "output": None,
-                    "stdout": "",
-                    "stderr": str(e),
-                    "artifacts": {}
-                }
+        # Try execution with intelligent retry
+        return self._execute_with_retry(code, files, timeout, allowed_libraries)
     
     def execute_simple(self, code: str) -> Dict[str, Any]:
         """
@@ -127,8 +90,295 @@ class SandboxExecutor:
             allowed_libraries=None
         )
     
+    def _execute_with_retry(self, 
+                          code: str, 
+                          files: Dict[str, Any], 
+                          timeout: int,
+                          allowed_libraries: Optional[List[str]] = None,
+                          max_retries: int = 3) -> Dict[str, Any]:
+        """
+        Execute code with intelligent retry using LLM to fix errors.
+        
+        Args:
+            code: Python code to execute
+            files: Dictionary of files to make available
+            timeout: Execution timeout
+            allowed_libraries: Additional allowed libraries
+            max_retries: Maximum number of retry attempts
+            
+        Returns:
+            Dict with execution results
+        """
+        from core.llm_client import LLMClient
+        
+        original_code = code
+        retry_count = 0
+        error_history = []
+        
+        while retry_count <= max_retries:
+            # Create temporary directory for execution
+            with tempfile.TemporaryDirectory() as temp_dir:
+                try:
+                    # Setup sandbox environment
+                    self._setup_sandbox_environment(temp_dir, files, code)
+                    
+                    # Execute code
+                    result = self._run_code_in_sandbox(temp_dir, timeout)
+                    
+                    if result.get("success", False):
+                        # Collect artifacts (plots, files generated)
+                        artifacts = self._collect_artifacts(temp_dir)
+                        result["artifacts"] = artifacts
+                        result["retry_count"] = retry_count
+                        result["fixed_code"] = code if retry_count > 0 else None
+                        return result
+                    else:
+                        # Code execution failed, try to fix it
+                        error_msg = result.get("error", "Unknown error")
+                        stderr = result.get("stderr", "")
+                        
+                        logger.warning(f"Execution attempt {retry_count + 1} failed: {error_msg}")
+                        error_history.append({
+                            "attempt": retry_count + 1,
+                            "error": error_msg,
+                            "stderr": stderr,
+                            "code": code
+                        })
+                        
+                        if retry_count >= max_retries:
+                            logger.error(f"Max retries ({max_retries}) exceeded. All attempts failed.")
+                            return self._create_failure_result(
+                                original_code, code, error_history, result
+                            )
+                        
+                        # Try to fix the error using LLM
+                        fixed_code = self._fix_code_with_llm(
+                            code, error_msg, stderr, error_history
+                        )
+                        
+                        if fixed_code and fixed_code.strip() != code.strip():
+                            logger.info(f"LLM suggested code fix for attempt {retry_count + 2}")
+                            code = fixed_code
+                        else:
+                            logger.warning("LLM could not suggest a fix, retrying with original code")
+                        
+                        retry_count += 1
+                        
+                except Exception as e:
+                    logger.error(f"Critical error in retry attempt {retry_count + 1}: {e}")
+                    error_msg = str(e)
+                    import traceback
+                    stderr = traceback.format_exc()
+                    
+                    error_history.append({
+                        "attempt": retry_count + 1,
+                        "error": error_msg,
+                        "stderr": stderr,
+                        "code": code
+                    })
+                    
+                    # Handle dependency errors specially
+                    if self._is_dependency_error(error_msg, stderr):
+                        missing_packages = self._extract_missing_packages(error_msg, stderr)
+                        if missing_packages:
+                            logger.info(f"Installing missing packages: {missing_packages}")
+                            self._install_packages(missing_packages)
+                            retry_count += 1
+                            continue
+                    
+                    if retry_count >= max_retries:
+                        logger.error(f"Max retries ({max_retries}) exceeded after critical error.")
+                        return self._create_failure_result(
+                            original_code, code, error_history, 
+                            {"error": error_msg, "stderr": stderr, "success": False}
+                        )
+                    
+                    # Try to fix the error using LLM
+                    fixed_code = self._fix_code_with_llm(
+                        code, error_msg, stderr, error_history
+                    )
+                    
+                    if fixed_code and fixed_code.strip() != code.strip():
+                        logger.info(f"LLM suggested code fix after critical error")
+                        code = fixed_code
+                    
+                    retry_count += 1
+        
+        # Should not reach here, but just in case
+        return self._create_failure_result(
+            original_code, code, error_history, 
+            {"error": "Max retries exceeded", "success": False}
+        )
+    
+    def _fix_code_with_llm(self, 
+                         code: str, 
+                         error_msg: str, 
+                         stderr: str, 
+                         error_history: List[Dict]) -> Optional[str]:
+        """
+        Use LLM to fix code based on error messages.
+        
+        Args:
+            code: The failing code
+            error_msg: Error message
+            stderr: Standard error output
+            error_history: History of previous errors and attempts
+            
+        Returns:
+            Fixed code or None if LLM couldn't fix it
+        """
+        try:
+            from core.llm_client import LLMClient
+            
+            llm_client = LLMClient()
+            
+            # Build context for LLM
+            error_context = f"""
+ERROR ANALYSIS AND CODE FIXING REQUEST
+
+Original Code:
+```python
+{code}
+```
+
+Current Error:
+{error_msg}
+
+Full Error Details:
+{stderr}
+
+Previous Attempts:
+"""
+            
+            for i, attempt in enumerate(error_history):
+                error_context += f"""
+Attempt {attempt['attempt']}:
+Error: {attempt['error']}
+Code used: 
+```python
+{attempt['code'][:500]}{'...' if len(attempt['code']) > 500 else ''}
+```
+"""
+            
+            fix_prompt = f"""{error_context}
+
+TASK: Fix the Python code to resolve the error. Focus on:
+1. Import errors - add missing imports or install packages
+2. Syntax errors - fix syntax issues
+3. Runtime errors - handle exceptions and edge cases
+4. Logic errors - fix algorithmic issues
+
+REQUIREMENTS:
+- Return ONLY the corrected Python code
+- Do NOT include explanations or markdown
+- Ensure the code is complete and executable
+- Add any necessary imports at the top
+- Handle edge cases that might cause similar errors
+
+RESPONSE FORMAT: Return only the Python code, nothing else.
+"""
+            
+            logger.info("Requesting code fix from LLM...")
+            
+            # Get fixed code from LLM
+            fixed_code_response = llm_client.generate(
+                prompt=fix_prompt,
+                max_tokens=2000
+            )
+            
+            if fixed_code_response and isinstance(fixed_code_response, str):
+                fixed_code = fixed_code_response.strip()
+                
+                # Clean up the response (remove markdown if present)
+                if fixed_code.startswith('```python'):
+                    fixed_code = fixed_code.replace('```python\n', '').replace('```', '')
+                elif fixed_code.startswith('```'):
+                    fixed_code = fixed_code.replace('```\n', '').replace('```', '')
+                
+                # Validate that we got actual code
+                if len(fixed_code) > 10 and ('import ' in fixed_code or 'def ' in fixed_code or '=' in fixed_code):
+                    logger.info("LLM provided code fix")
+                    return fixed_code
+                else:
+                    logger.warning("LLM response doesn't appear to be valid code")
+                    return None
+            else:
+                logger.warning("No valid response from LLM for code fix")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error getting code fix from LLM: {e}")
+            return None
+    
+    def _create_failure_result(self, 
+                             original_code: str, 
+                             final_code: str, 
+                             error_history: List[Dict], 
+                             last_result: Dict) -> Dict[str, Any]:
+        """Create a comprehensive failure result with all attempt details."""
+        return {
+            "success": False,
+            "error": last_result.get("error", "Unknown error"),
+            "stderr": last_result.get("stderr", ""),
+            "traceback": last_result.get("traceback", ""),
+            "output": None,
+            "stdout": "",
+            "artifacts": {},
+            "retry_attempts": len(error_history),
+            "error_history": error_history,
+            "original_code": original_code,
+            "final_attempted_code": final_code
+        }
+    
+    def _is_dependency_error(self, error_msg: str, stderr: str) -> bool:
+        """Check if error is related to missing dependencies."""
+        dependency_indicators = [
+            "ModuleNotFoundError",
+            "ImportError", 
+            "No module named",
+            "Missing optional dependency",
+            "cannot import name",
+            "DLL load failed",
+            "package not found"
+        ]
+        
+        full_error = f"{error_msg} {stderr}".lower()
+        return any(indicator.lower() in full_error for indicator in dependency_indicators)
+    
+    def _extract_missing_packages(self, error_msg: str, stderr: str) -> List[str]:
+        """Extract package names from dependency error messages."""
+        import re
+        
+        packages = []
+        full_error = f"{error_msg} {stderr}"
+        
+        # Common patterns for missing packages
+        patterns = [
+            r"No module named '([^']+)'",
+            r"ModuleNotFoundError: No module named '([^']+)'",
+            r"ImportError: No module named ([^\s]+)",
+            r"Missing optional dependency '([^']+)'",
+            r"cannot import name '([^']+)'"
+        ]
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, full_error)
+            packages.extend(matches)
+        
+        # Clean and deduplicate
+        clean_packages = []
+        for pkg in packages:
+            # Map common package names
+            pkg = pkg.strip().replace('"', '').replace("'", "")
+            if pkg and pkg not in clean_packages:
+                # Map to installable names
+                mapped_pkg = self.PACKAGE_MAPPING.get(pkg.lower(), pkg)
+                if mapped_pkg not in clean_packages:
+                    clean_packages.append(mapped_pkg)
+        
+        return clean_packages
+
     def _setup_sandbox_environment(self, temp_dir: str, files: Dict[str, Any], code: str):
-        """Setup the sandbox environment with files and code."""
         
         # Copy uploaded files to sandbox
         for filename, file_info in files.items():
@@ -204,6 +454,16 @@ def safe_download(url, *args, **kwargs):
         chunks.append(chunk)
     return b"".join(chunks)
 
+# Auto-install missing packages function
+def install_missing_package(package_name):
+    import subprocess
+    import sys
+    try:
+        subprocess.check_call([sys.executable, '-m', 'pip', 'install', package_name, '--quiet'])
+        return True
+    except:
+        return False
+
 # Patch requests.get to use safe_download  
 try:
     import requests
@@ -217,6 +477,33 @@ try:
     requests.get = patched_get
 except Exception:
     pass
+
+# Override import to auto-install missing packages
+original_import = __builtins__['__import__']
+
+def auto_install_import(name, globals=None, locals=None, fromlist=(), level=0):
+    try:
+        return original_import(name, globals, locals, fromlist, level)
+    except ImportError as e:
+        # Common package mappings for auto-install
+        package_map = {{
+            'bs4': 'beautifulsoup4',
+            'PIL': 'Pillow',
+            'cv2': 'opencv-python',
+            'sklearn': 'scikit-learn'
+        }}
+        
+        package_to_install = package_map.get(name, name)
+        print(f"Missing package {{name}}, attempting to install {{package_to_install}}...")
+        
+        if install_missing_package(package_to_install):
+            print(f"Successfully installed {{package_to_install}}")
+            return original_import(name, globals, locals, fromlist, level)
+        else:
+            print(f"Failed to install {{package_to_install}}")
+            raise e
+
+__builtins__['__import__'] = auto_install_import
 
 def main():
     try:
@@ -488,7 +775,7 @@ if __name__ == "__main__":
         return artifacts
     
     def _create_requirements_file(self, temp_dir: str, code: str):
-        """Create requirements.txt based on detected imports."""
+        """Create requirements.txt based on detected imports and auto-install if needed."""
         
         # Map import names to package names
         package_mapping = {
@@ -501,7 +788,30 @@ if __name__ == "__main__":
             'beautifulsoup4': 'beautifulsoup4',
             'PIL': 'Pillow',
             'cv2': 'opencv-python',
-            'scipy': 'scipy'
+            'scipy': 'scipy',
+            'lxml': 'lxml',
+            'html5lib': 'html5lib',
+            'openpyxl': 'openpyxl',
+            'xlrd': 'xlrd',
+            'sklearn': 'scikit-learn',
+            'plotly': 'plotly',
+            'dash': 'dash',
+            'streamlit': 'streamlit',
+            'flask': 'flask',
+            'django': 'django',
+            'fastapi': 'fastapi',
+            'sqlalchemy': 'sqlalchemy',
+            'pymongo': 'pymongo',
+            'psycopg2': 'psycopg2-binary',
+            'mysql': 'mysql-connector-python',
+            'redis': 'redis',
+            'celery': 'celery',
+            'boto3': 'boto3',
+            'azure': 'azure-storage-blob',
+            'google': 'google-cloud-storage',
+            'tweepy': 'tweepy',
+            'selenium': 'selenium',
+            'scrapy': 'scrapy'
         }
         
         # Extract imports from code
@@ -509,22 +819,48 @@ if __name__ == "__main__":
         for line in code.split('\n'):
             line = line.strip()
             if line.startswith('import '):
-                module = line.replace('import ', '').split('.')[0].split(' as ')[0]
+                module = line.replace('import ', '').split('.')[0].split(' as ')[0].split(',')[0].strip()
                 imports.add(module)
             elif line.startswith('from '):
                 module = line.split(' ')[1].split('.')[0]
                 imports.add(module)
         
-        # Create requirements.txt
+        # Create requirements.txt with auto-install
         requirements = []
         for imp in imports:
             if imp in package_mapping:
                 requirements.append(package_mapping[imp])
+            elif imp not in ['sys', 'os', 'json', 'csv', 're', 'math', 'datetime', 'time', 'io', 'base64', 'collections', 'traceback', 'signal', 'platform']:
+                # For unknown packages, try to install them directly
+                requirements.append(imp)
         
         if requirements:
             requirements_path = os.path.join(temp_dir, "requirements.txt")
             with open(requirements_path, "w") as f:
                 f.write('\n'.join(requirements))
+            
+            # Auto-install packages
+            self._install_packages(requirements, temp_dir)
+    
+    def _install_packages(self, requirements: List[str], temp_dir: str):
+        """Dynamically install packages in the sandbox."""
+        import subprocess
+        
+        for package in requirements:
+            try:
+                logger.info(f"Installing package: {package}")
+                result = subprocess.run([
+                    sys.executable, '-m', 'pip', 'install', package, '--quiet', '--no-warn-script-location'
+                ], capture_output=True, text=True, timeout=60, cwd=temp_dir)
+                
+                if result.returncode == 0:
+                    logger.info(f"Successfully installed: {package}")
+                else:
+                    logger.warning(f"Failed to install {package}: {result.stderr}")
+            except subprocess.TimeoutExpired:
+                logger.error(f"Timeout installing {package}")
+            except Exception as e:
+                logger.error(f"Error installing {package}: {e}")
     
     def _create_sandbox_template(self) -> str:
         """Create a template for the sandbox environment."""

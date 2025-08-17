@@ -2,8 +2,8 @@ from typing import Dict, List, Any
 import pandas as pd
 import json
 import logging
-from workflows.base import BaseWorkflow
-from workflows.dynamic_code_execution import DynamicCodeExecutionWorkflow
+from .base import BaseWorkflow
+from .dynamic_code_execution import DynamicCodeExecutionWorkflow
 from core.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
@@ -86,12 +86,12 @@ class DataAnalysisWorkflow(BaseWorkflow):
             raise
 
     def execute(self, sandbox_executor, task_description: str) -> Dict[str, Any]:
-        """Execute the data analysis workflow using the provided sandbox executor.
+        """Execute the data analysis workflow using the provided sandbox executor with intelligent retry.
 
         The method will build a plan from the workflow's manifest, generate code,
-        and execute it in the provided executor (or the one stored on the workflow).
+        and execute it with automatic error fixing and dependency management.
         """
-        logger.info("Executing data analysis workflow")
+        logger.info("Executing data analysis workflow with intelligent retry system")
 
         try:
             questions = [task_description]
@@ -113,13 +113,30 @@ class DataAnalysisWorkflow(BaseWorkflow):
             if executor is None:
                 raise RuntimeError("No sandbox executor available for DataAnalysisWorkflow")
 
-            result = executor.execute_simple(code)
-
-            return {
+            # Use enhanced execute_code with retry functionality
+            logger.info("Executing data analysis code with intelligent retry system")
+            result = executor.execute_code(
+                code=code,
+                files=file_manifest,
+                timeout=300,  # Longer timeout for data analysis
+                allowed_libraries=['pandas', 'numpy', 'matplotlib', 'seaborn', 'plotly', 'scipy', 'sklearn']
+            )
+            
+            # Enhanced result processing
+            enhanced_result = {
                 "success": result.get("success", False),
                 "result": result,
-                "workflow": self.get_workflow_type()
+                "workflow": self.get_workflow_type(),
+                "retry_count": result.get("retry_count", 0),
+                "was_fixed_by_llm": result.get("retry_count", 0) > 0,
+                "original_code": code,
+                "final_code": result.get("fixed_code", code)
             }
+            
+            if result.get("retry_count", 0) > 0:
+                logger.info(f"Data analysis code was successfully fixed after {result['retry_count']} retries")
+            
+            return enhanced_result
             
         except Exception as e:
             logger.error(f"Data analysis workflow execution failed: {e}")

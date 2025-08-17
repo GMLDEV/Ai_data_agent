@@ -33,7 +33,7 @@ OUTPUT FORMAT REQUIRED: {output_format}
 
 REQUIREMENTS:
 1. Write complete, executable Python code
-2. Use only these allowed libraries: pandas, numpy, json, csv, re, os, sys, io, base64, math, datetime, collections
+2. Use only these allowed libraries: pandas, numpy, json, csv, re, os, sys, io, base64, math, datetime, collections, requests, beautifulsoup4, bs4, lxml, html5lib
 3. Handle file loading automatically (files will be available in current directory)
 4. Include proper error handling
 5. Generate the exact output format requested

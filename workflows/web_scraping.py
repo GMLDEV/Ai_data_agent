@@ -2,7 +2,7 @@ from typing import Dict, List, Any
 import requests
 from bs4 import BeautifulSoup
 import logging
-from workflows.base import BaseWorkflow
+from .base import BaseWorkflow
 from core.llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
@@ -86,8 +86,8 @@ class WebScrapingWorkflow(BaseWorkflow):
         return code
 
     def execute(self, sandbox_executor, task_description: str) -> Dict[str, Any]:
-        """Execute the web scraping workflow using the provided sandbox executor."""
-        logger.info("Executing web scraping workflow")
+        """Execute the web scraping workflow using the provided sandbox executor with intelligent retry."""
+        logger.info("Executing web scraping workflow with intelligent retry capability")
 
         try:
             questions = [task_description]
@@ -117,12 +117,30 @@ class WebScrapingWorkflow(BaseWorkflow):
             if executor is None:
                 raise RuntimeError("No sandbox executor available for WebScrapingWorkflow")
 
-            result = executor.execute_simple(code)
-            return {
+            # Use enhanced execute_code with retry functionality
+            logger.info("Executing web scraping code with intelligent retry system")
+            result = executor.execute_code(
+                code=code,
+                files=file_manifest,  # Pass file manifest for context
+                timeout=300,  # Longer timeout for web scraping
+                allowed_libraries=['requests', 'beautifulsoup4', 'lxml', 'html5lib', 'selenium', 'pandas']
+            )
+            
+            # Enhanced result processing
+            enhanced_result = {
                 "success": result.get("success", False),
                 "result": result,
-                "workflow": self.get_workflow_type()
+                "workflow": self.get_workflow_type(),
+                "retry_count": result.get("retry_count", 0),
+                "was_fixed_by_llm": result.get("retry_count", 0) > 0,
+                "original_code": code,
+                "final_code": result.get("fixed_code", code)
             }
+            
+            if result.get("retry_count", 0) > 0:
+                logger.info(f"Code was successfully fixed after {result['retry_count']} retries")
+            
+            return enhanced_result
             
         except Exception as e:
             logger.error(f"Web scraping workflow execution failed: {e}")
