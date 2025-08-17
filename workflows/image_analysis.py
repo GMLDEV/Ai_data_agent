@@ -50,13 +50,27 @@ class ImageAnalysisWorkflow(BaseWorkflow):
         )
         return code
 
-    def execute(self, code: str, plan: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Run script in sandbox.
-        """
-        logger.info("Executing image analysis code in sandbox")
-        result = self.sandbox_executor.execute_simple(code)
-        return result
+    def execute(self, sandbox_executor, task_description: str) -> Dict[str, Any]:
+        """Execute the image analysis workflow using the provided sandbox executor."""
+        logger.info("Executing image analysis workflow")
+
+        questions = [task_description]
+        file_manifest = self.manifest
+        image_files = [f for f, info in file_manifest.items() if info.get('type') in ('png', 'jpg', 'jpeg')]
+
+        plan = self.plan(questions, file_manifest, keywords=[], image_files=image_files)
+        code = self.generate_code(questions, file_manifest, plan)
+
+        executor = sandbox_executor or self.sandbox_executor
+        if executor is None:
+            raise RuntimeError("No sandbox executor available for ImageAnalysisWorkflow")
+
+        result = executor.execute_simple(code)
+        return {
+            "success": result.get("success", False),
+            "result": result,
+            "workflow": self.get_workflow_type()
+        }
 
     def validate(self, result: Dict[str, Any], plan: Dict[str, Any]) -> bool:
         """

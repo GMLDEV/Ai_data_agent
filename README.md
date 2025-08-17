@@ -171,3 +171,41 @@ tiktoken
 - Integration, further prompt refinement, and production deployment are next priorities.
 
 ---
+
+## Changelog — Phase 4 (tests, fixes, integration, docs)
+
+Summary of changes and updates made during Phase 4. Use this as a quick reference for what was fixed, why, and where.
+
+- tests: Fixed async test handling and test expectations
+  - Files: `tests/test_integration.py`, `tests/test_request_processor.py`, `tests/test_phase2.py`
+  - What changed: Added `pytest.mark.asyncio` to async tests, updated mocks to use `AsyncMock`, fixed return vs assert usage, and aligned mock orchestrator responses with the orchestrator output shape.
+  - Status: Done
+
+- workflow constructors & inheritance: Ensure BaseWorkflow required args and abstract methods implemented
+  - Files: `workflows/data_analysis.py`, `workflows/dynamic_code_execution.py`, `workflows/web_scraping.py`, `workflows/image_analysis.py`
+  - What changed: Fixed duplicate/misplaced `__init__` implementations, added `manifest` parameter where required, implemented `get_workflow_type()` on dynamic workflow to satisfy the abstract base class, and corrected `super()` calls.
+  - Status: Done
+
+- orchestrator: accept pre-initialized workflows and include request id in responses
+  - Files: `core/orchestrator.py`
+  - What changed: `LLMOrchestrator.__init__` now accepts an optional `workflows` dict (used by tests to pass prebuilt workflows). `_execute_workflow` uses provided workflow instances first, and `process_request` generates and returns a `request_id` in the response.
+  - Status: Done
+
+- tests vs orchestrator contract alignment
+  - Files: `tests/test_request_processor.py`, `tests/test_integration.py`
+  - What changed: Updated test mocks to match the orchestrator response shape (including `request_id`, `workflow_used`, `result`), and adjusted assertions accordingly.
+  - Status: Done
+
+- code/style/indentation fixes
+  - Files: `workflows/dynamic_code_execution.py`, `workflows/data_analysis.py`
+  - What changed: Fixed indentation issues, removed misplaced constructor snippets that had leaked into methods, and cleaned up prompt-building logic.
+  - Status: Done
+
+- README: expanded documentation and API usage
+  - Files: `README.md`
+  - What changed: Added full API usage example, technical highlights, workflow architecture, security/limits, package requirements, deployment suggestions, and this Phase 4 changelog.
+  - Status: Done
+
+Notes and follow-ups:
+- The pydantic deprecation warning is raised by a third-party dependency (pydantic) and can be addressed by upgrading code to `ConfigDict` in a later pass or waiting for dependencies to migrate.
+- Recommended next steps: run `pytest -q` locally, containerize the app for deployment, and add a lightweight CI job to run tests on each push.

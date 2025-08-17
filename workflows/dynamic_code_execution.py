@@ -116,43 +116,62 @@ class DynamicCodeExecutionWorkflow(BaseWorkflow):
             logger.error(f"Code generation failed: {e}")
             raise
     
-    def execute(self, code: str, file_manifest: Dict[str, Any], 
-               plan: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute the generated code with retry logic."""
-        
+    def execute(self, sandbox_executor, task_description: str) -> Dict[str, Any]:
+        """Execute the workflow: build plan, generate code, and run with retry/repair."""
+        questions = [task_description]
+        file_manifest = self.manifest
+        plan = self.plan(questions, file_manifest, keywords=[], urls=file_manifest.get('urls', []))
+
+        code = self.generate_code(questions, file_manifest, plan)
+
+        executor = sandbox_executor or self.sandbox_executor
+        if executor is None:
+            raise RuntimeError("No sandbox executor available for DynamicCodeExecutionWorkflow")
+
         for attempt in range(self.max_retries + 1):
             try:
                 logger.info(f"Execution attempt {attempt + 1}/{self.max_retries + 1}")
-                
-                result = self.sandbox_executor.execute_code(
-                    code=code,
-                    files=file_manifest,
-                    timeout=self.execution_timeout,
-                    allowed_libraries=plan.get("libraries_needed", [])
-                )
-                
-                if result["success"]:
+
+                # Prefer execute_code if available for richer options
+                if hasattr(executor, 'execute_code'):
+                    result = executor.execute_code(
+                        code=code,
+                        files=file_manifest,
+                        timeout=self.execution_timeout,
+                        allowed_libraries=plan.get('libraries_needed', [])
+                    )
+                else:
+                    result = executor.execute_simple(code)
+
+                if result.get('success'):
                     logger.info("Code executed successfully")
-                    return result
+                    return {
+                        "success": True,
+                        "result": result,
+                        "workflow": self.get_workflow_type()
+                    }
                 else:
                     logger.warning(f"Execution failed: {result.get('error', 'Unknown error')}")
                     if attempt < self.max_retries:
-                        # Try to repair the code
                         code = self.repair(code, result, plan)
                     else:
-                        return result
-                        
+                        return {
+                            "success": False,
+                            "error": result.get('error', 'Execution failed'),
+                            "workflow": self.get_workflow_type(),
+                            "result": result
+                        }
+
             except Exception as e:
                 logger.error(f"Execution attempt {attempt + 1} failed: {e}")
                 if attempt == self.max_retries:
                     return {
                         "success": False,
                         "error": str(e),
-                        "output": None,
-                        "artifacts": {}
+                        "workflow": self.get_workflow_type()
                     }
-        
-        return {"success": False, "error": "Max retries exceeded"}
+
+        return {"success": False, "error": "Max retries exceeded", "workflow": self.get_workflow_type()}
     
     def validate(self, result: Dict[str, Any], plan: Dict[str, Any]) -> Dict[str, Any]:
         """Validate the execution result against expected output format."""

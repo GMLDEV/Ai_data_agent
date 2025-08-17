@@ -64,13 +64,27 @@ class WebScrapingWorkflow(BaseWorkflow):
         )
         return code
 
-    def execute(self, code: str, plan: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Run script in sandbox.
-        """
-        logger.info("Executing web scraping code in sandbox")
-        result = self.sandbox_executor.execute_simple(code)
-        return result
+    def execute(self, sandbox_executor, task_description: str) -> Dict[str, Any]:
+        """Execute the web scraping workflow using the provided sandbox executor."""
+        logger.info("Executing web scraping workflow")
+
+        questions = [task_description]
+        file_manifest = self.manifest
+        urls = file_manifest.get('urls', [])
+
+        plan = self.plan(questions, file_manifest, keywords=[], urls=urls)
+        code = self.generate_code(questions, file_manifest, plan)
+
+        executor = sandbox_executor or self.sandbox_executor
+        if executor is None:
+            raise RuntimeError("No sandbox executor available for WebScrapingWorkflow")
+
+        result = executor.execute_simple(code)
+        return {
+            "success": result.get("success", False),
+            "result": result,
+            "workflow": self.get_workflow_type()
+        }
 
     def validate(self, result: Dict[str, Any], plan: Dict[str, Any]) -> bool:
         """

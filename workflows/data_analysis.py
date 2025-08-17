@@ -82,11 +82,32 @@ class DataAnalysisWorkflow(BaseWorkflow):
             logger.error(f"Data analysis code generation failed: {e}")
             raise
 
-    def execute(self, code: str, plan: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute generated code in the sandbox."""
-        logger.info("Executing data analysis code in sandbox")
-        result = self.sandbox_executor.execute_simple(code)
-        return result
+    def execute(self, sandbox_executor, task_description: str) -> Dict[str, Any]:
+        """Execute the data analysis workflow using the provided sandbox executor.
+
+        The method will build a plan from the workflow's manifest, generate code,
+        and execute it in the provided executor (or the one stored on the workflow).
+        """
+        logger.info("Executing data analysis workflow")
+
+        questions = [task_description]
+        file_manifest = self.manifest
+
+        # Build the plan and generate code
+        plan = self.plan(questions, file_manifest, keywords=[], urls=file_manifest.get('urls', []))
+        code = self.generate_code(questions, file_manifest, plan)
+
+        executor = sandbox_executor or self.sandbox_executor
+        if executor is None:
+            raise RuntimeError("No sandbox executor available for DataAnalysisWorkflow")
+
+        result = executor.execute_simple(code)
+
+        return {
+            "success": result.get("success", False),
+            "result": result,
+            "workflow": self.get_workflow_type()
+        }
 
     def validate(self, result: Dict[str, Any], plan: Dict[str, Any]) -> bool:
         """Validate output format and constraints."""
