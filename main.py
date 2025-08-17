@@ -8,6 +8,7 @@ import uvicorn
 
 # Import our modules
 from core.file_processor import FileProcessor
+from core.orchestrator import LLMOrchestrator
 from sandbox.executor import SandboxExecutor
 from config import settings
 
@@ -36,6 +37,7 @@ app.add_middleware(
 
 # Initialize core components
 file_processor = FileProcessor()
+orchestrator = LLMOrchestrator()
 sandbox_executor = SandboxExecutor(
     settings.sandbox_memory_limit,
     settings.sandbox_cpu_limit,
@@ -128,15 +130,22 @@ async def execute_code(code: str = Form(...)):
 
 @app.post("/process-request")
 async def process_request(
-    questions: str = Form(...),
+    questions_txt: UploadFile = File(..., alias="questions.txt"),
     files: Optional[List[UploadFile]] = File(None)
 ):
     """Main LLM-powered request processing endpoint"""
     try:
-        # Process uploaded files
+        # Read questions from questions.txt file
+        questions_content = await questions_txt.read()
+        questions = questions_content.decode('utf-8')
+        
+        # Process additional files
         file_dict = {}
         if files:
             for file in files:
+                # Skip questions.txt if it appears in the files list
+                if file.filename == "questions.txt":
+                    continue
                 content = await file.read()
                 file_dict[file.filename] = content
         
