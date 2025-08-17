@@ -77,25 +77,28 @@ class LLMOrchestrator:
     
     def _execute_workflow(self, classification: Dict[str, Any], manifest: Dict[str, Any], questions: str) -> Dict[str, Any]:
         """Execute the appropriate workflow"""
+        import traceback
         try:
             workflow_type = classification['workflow']
-            
+            logger.info(f"[orchestrator] Executing workflow: {workflow_type}")
+            logger.info(f"[orchestrator] Manifest type: {type(manifest)}; Manifest value: {manifest}")
+            if not isinstance(manifest, dict):
+                logger.error(f"[orchestrator] Manifest is not a dict, got {type(manifest)}: {manifest}")
+                raise TypeError(f"[orchestrator] Manifest must be a dict, got {type(manifest)}")
+
             if workflow_type in self.workflows:
-                # Use provided workflow instance
                 workflow = self.workflows[workflow_type]
                 result = workflow.execute(self.sandbox, questions)
             elif self.llm_available:
-                # Fallback to creating new workflow if not provided
                 workflow = get_workflow(
-                    workflow_type, 
-                    self.code_generator, 
+                    workflow_type,
+                    self.code_generator,
                     manifest
                 )
                 result = workflow.execute(self.sandbox, questions)
             else:
-                # Use basic deterministic approach
                 result = self._execute_basic_analysis(manifest, questions)
-            
+
             return result
             
         except Exception as e:
