@@ -70,6 +70,9 @@ class WebScrapingWorkflow(BaseWorkflow):
 
         questions = [task_description]
         file_manifest = self.manifest
+        if not isinstance(file_manifest, dict):
+            logger.error(f"file_manifest is not a dict, got {type(file_manifest)}: {file_manifest}")
+            raise TypeError(f"file_manifest must be a dict, got {type(file_manifest)}")
         urls = file_manifest.get('urls', [])
 
         plan = self.plan(questions, file_manifest, keywords=[], urls=urls)
