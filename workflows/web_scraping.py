@@ -20,6 +20,9 @@ class WebScrapingWorkflow(BaseWorkflow):
     """
 
     def plan(self, questions: List[str], file_manifest: Dict[str, Any], keywords: List[str], urls: List[str]) -> Dict[str, Any]:
+        if not isinstance(file_manifest, dict):
+            logger.error(f"[plan] file_manifest is not a dict, got {type(file_manifest)}: {file_manifest}")
+            raise TypeError(f"[plan] file_manifest must be a dict, got {type(file_manifest)}")
         """
         Analyze requirements and page structure using LLM.
         Optionally fetch HTML and summarize for LLM.
@@ -50,6 +53,9 @@ class WebScrapingWorkflow(BaseWorkflow):
         return plan
 
     def generate_code(self, questions: List[str], file_manifest: Dict[str, Any], plan: Dict[str, Any]) -> str:
+        if not isinstance(file_manifest, dict):
+            logger.error(f"[generate_code] file_manifest is not a dict, got {type(file_manifest)}: {file_manifest}")
+            raise TypeError(f"[generate_code] file_manifest must be a dict, got {type(file_manifest)}")
         """
         Prompt LLM to write a Python script for scraping and navigation.
         """
