@@ -86,6 +86,7 @@ class LLMOrchestrator:
                 logger.error(f"[orchestrator] Manifest is not a dict, got {type(manifest)}: {manifest}")
                 raise TypeError(f"[orchestrator] Manifest must be a dict, got {type(manifest)}")
 
+            # Only execute the selected workflow
             if workflow_type in self.workflows:
                 workflow = self.workflows[workflow_type]
                 result = workflow.execute(self.sandbox, questions)
