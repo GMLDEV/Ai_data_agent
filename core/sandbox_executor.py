@@ -333,9 +333,13 @@ if __name__ == "__main__":
             original_cwd = os.getcwd()
             os.chdir(temp_dir)
             
-            # Set up environment variables for security
+            # Set up environment variables for security AND package discovery
             env = os.environ.copy()
-            env['PYTHONPATH'] = temp_dir
+            # CRITICAL: Put sandbox directory FIRST in Python path so locally installed packages are found first
+            # Use appropriate path separator for the OS
+            path_separator = ";" if platform.system() == "Windows" else ":"
+            current_pythonpath = env.get('PYTHONPATH', '')
+            env['PYTHONPATH'] = temp_dir + (path_separator + current_pythonpath if current_pythonpath else '')
             env['HOME'] = temp_dir
             
             # Log environment details to ensure consistency
@@ -581,24 +585,51 @@ if __name__ == "__main__":
                 logger.info("Installing required packages...")
                 
                 # CRITICAL: Use the same Python executable that will run the code
-                # This prevents environment mismatches between installation and execution
+                # AND install packages locally in the sandbox directory to avoid environment mismatches
                 python_executable = sys.executable
                 
-                # Install packages using pip with the SAME Python interpreter
+                # Set up the SAME environment variables as code execution
+                env = os.environ.copy()
+                # Use correct path separator for Linux/Docker vs Windows
+                path_separator = ":" if platform.system() != "Windows" else ";"
+                current_pythonpath = env.get('PYTHONPATH', '')
+                env['PYTHONPATH'] = temp_dir + (path_separator + current_pythonpath if current_pythonpath else '')
+                env['HOME'] = temp_dir
+                
+                # Install packages with --target to install locally in sandbox
+                # This ensures packages are installed exactly where the code will look for them
+                install_command = [
+                    python_executable, "-m", "pip", "install", 
+                    "-r", "requirements.txt",
+                    "--target", temp_dir,  # Install packages directly in sandbox directory
+                    "--no-cache-dir",      # Don't use cache to avoid conflicts (important for Docker)
+                    "--disable-pip-version-check",  # Reduce noise
+                ]
+                
+                # Additional Docker/Linux optimizations
+                if platform.system() != "Windows":
+                    install_command.extend([
+                        "--upgrade",           # Ensure latest versions in Docker
+                        "--force-reinstall"    # Force reinstall to local directory
+                    ])
+                
+                logger.debug(f"🐧 Install command: {' '.join(install_command)}")
+                logger.debug(f"🐧 Install environment: PYTHONPATH={env.get('PYTHONPATH')}")
+                
+                # Install packages using pip with same environment as execution
                 process = subprocess.Popen(
-                    [python_executable, "-m", "pip", "install", "-r", "requirements.txt"],
+                    install_command,
                     cwd=temp_dir,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
-                    # Use same environment variables as code execution
-                    env=os.environ.copy()
+                    env=env  # Use SAME environment as code execution
                 )
                 
                 stdout, stderr = process.communicate(timeout=120)  # 2 minute timeout for installs
                 
                 if process.returncode == 0:
-                    logger.info("Successfully installed packages")
+                    logger.info("Successfully installed packages locally in sandbox")
                     if stdout:
                         logger.debug(f"Install stdout: {stdout}")
                 else:
@@ -651,12 +682,18 @@ for package in packages:
 print(json.dumps(results))
 """
                     
-                    # Use SAME environment as code execution
+                    # Use SAME environment as code execution AND installation
                     env = os.environ.copy()
-                    env['PYTHONPATH'] = temp_dir
+                    # Use correct path separator for Linux/Docker vs Windows
+                    path_separator = ":" if platform.system() != "Windows" else ";"
+                    current_pythonpath = env.get('PYTHONPATH', '')
+                    env['PYTHONPATH'] = temp_dir + (path_separator + current_pythonpath if current_pythonpath else '')
                     env['HOME'] = temp_dir
                     
-                    # Run verification with same Python executable
+                    logger.debug(f"🔍 Verification environment: PYTHONPATH={env.get('PYTHONPATH')}")
+                    logger.debug(f"🔍 Platform: {platform.system()}, Path separator: '{path_separator}'")
+                    
+                    # Run verification with same Python executable and environment
                     process = subprocess.Popen(
                         [sys.executable, "-c", test_script],
                         cwd=temp_dir,

@@ -8,7 +8,7 @@ import json
 import pytest
 
 from core.request_processor import RequestProcessor
-from core.orchestrator import LLMOrchestrator
+from core.orchestrator import Orchestrator
 from core.classifier import WorkflowClassifier
 from core.prompt_manager import PromptManager
 from core.error_handler import ErrorHandler
@@ -33,7 +33,7 @@ class TestIntegration(unittest.TestCase):
         cls.error_handler = ErrorHandler()
         from config import Settings
         settings = Settings()
-        cls.code_generator = CodeGenerator(api_key=settings.openai_api_key)
+        cls.code_generator = CodeGenerator(llm_client=settings.openai_api_key)
         cls.classifier = WorkflowClassifier(api_key=settings.openai_api_key)
 
         # Initialize workflows with empty manifest
@@ -55,7 +55,7 @@ class TestIntegration(unittest.TestCase):
         )
 
         # Initialize orchestrator
-        cls.orchestrator = LLMOrchestrator(
+        cls.orchestrator = Orchestrator(
             workflows={
                 "data_analysis": cls.data_workflow,
                 "web_scraping": cls.web_workflow,
