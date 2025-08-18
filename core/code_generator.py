@@ -18,6 +18,15 @@ class CodeGenerator:
             max_tokens=2000
         )
         
+        # Initialize OpenAI code fixer for enhanced code generation
+        self.openai_fixer = None
+        try:
+            from core.openai_code_fixer import OpenAICodeFixer
+            self.openai_fixer = OpenAICodeFixer(api_key=self.api_key)
+            logger.info("OpenAI code fixer integrated with CodeGenerator")
+        except Exception as e:
+            logger.warning(f"Failed to initialize OpenAI code fixer: {e}")
+        
         self.code_generation_prompt = PromptTemplate(
             input_variables=["task_description", "file_manifest", "output_format", "workflow_type"],
             template="""
@@ -33,21 +42,31 @@ OUTPUT FORMAT REQUIRED: {output_format}
 
 REQUIREMENTS:
 1. Write complete, executable Python code
-2. Use only these allowed libraries: pandas, numpy, json, csv, re, os, sys, io, base64, math, datetime, collections, requests, beautifulsoup4, bs4, lxml, html5lib
+2. Use these allowed libraries: pandas, numpy, json, csv, re, os, sys, io, base64, math, datetime, collections, requests, beautifulsoup4, bs4, lxml, html5lib, matplotlib, seaborn, plotly
 3. Handle file loading automatically (files will be available in current directory)
-4. Include proper error handling
+4. Include proper error handling and comprehensive visualizations
 5. Generate the exact output format requested
 6. Add comments explaining key steps
-7. Print results clearly
+7. Print results clearly and save visualizations
+
+VISUALIZATION REQUIREMENTS:
+- Always create relevant visualizations for data analysis tasks
+- Use matplotlib, seaborn, or plotly as appropriate
+- Save plots with descriptive filenames
+- Include multiple chart types when relevant (scatter, bar, line, heatmap, etc.)
+- Add proper titles, labels, and legends
+- Create summary statistics visualizations
 
 IMPORTANT RULES:
-- For CSV files: Use pandas to load and analyze
+- For CSV files: Use pandas to load and analyze, create visualizations
 - Always print your final results
 - Handle missing values appropriately
-- If creating visualizations, describe what would be plotted (matplotlib not available yet)
+- Create interactive visualizations when possible
 - Store final results in a variable called 'final_result'
+- Save all plots to PNG files with descriptive names
 
 Generate ONLY the Python code, no explanations or markdown:
+```
 """
         )
         
@@ -98,15 +117,31 @@ Generate ONLY the corrected Python code, no explanations:
             return self._generate_fallback_code(task_description, manifest)
     
     def repair_code(self, original_code: str, error_message: str, task_description: str) -> str:
-        """Attempt to repair failed code"""
+        """Attempt to repair failed code using OpenAI code fixer"""
         try:
+            # Try OpenAI fixer first if available
+            if self.openai_fixer:
+                logger.info("Using OpenAI code fixer for repair...")
+                fixed_code, metadata = self.openai_fixer.fix_code_error(
+                    code=original_code,
+                    error_message=error_message,
+                    stderr="Code repair request",
+                    attempt_number=1,
+                    context={"task": task_description}
+                )
+                
+                if fixed_code:
+                    logger.info(f"Code repaired using OpenAI (tokens: {metadata.get('tokens_used', 'unknown')})")
+                    return fixed_code
+            
+            # Fallback to original method
             prompt = self.repair_prompt.format(
                 original_code=original_code,
                 error_message=error_message,
                 task_description=task_description
             )
             
-            logger.info("Attempting code repair...")
+            logger.info("Attempting code repair with local LLM...")
             repaired_code = self.llm.invoke(prompt)
             
             return self._clean_code_response(repaired_code)
@@ -114,6 +149,72 @@ Generate ONLY the corrected Python code, no explanations:
         except Exception as e:
             logger.error(f"Code repair failed: {e}")
             return original_code  # Return original if repair fails
+    
+    def generate_visualization_code(self, task_description: str, manifest: Dict[str, Any]) -> str:
+        """
+        Generate code with enhanced visualizations using OpenAI.
+        """
+        if not self.openai_fixer:
+            logger.warning("OpenAI fixer not available, using standard code generation")
+            return self.generate_code(task_description, manifest, workflow_type="visualization")
+        
+        try:
+            # Prepare data description
+            file_summary = self._create_file_summary(manifest)
+            data_sample = ""
+            
+            # Get sample data if available
+            if manifest.get('files'):
+                for filename, info in manifest['files'].items():
+                    if isinstance(info, dict) and info.get('preview'):
+                        data_sample = info['preview'][:1000]
+                        break
+            
+            data_description = f"Task: {task_description}\nFiles: {file_summary}"
+            
+            logger.info("Generating visualization code with OpenAI...")
+            viz_code = self.openai_fixer.generate_visualization_code(
+                data_description=data_description,
+                data_sample=data_sample,
+                visualization_type="comprehensive"
+            )
+            
+            if viz_code:
+                logger.info("Visualization code generated successfully")
+                return viz_code
+            else:
+                logger.warning("Failed to generate visualization code, falling back to standard generation")
+                return self.generate_code(task_description, manifest, workflow_type="data_analysis")
+            
+        except Exception as e:
+            logger.error(f"Visualization code generation failed: {e}")
+            return self.generate_code(task_description, manifest, workflow_type="data_analysis")
+    
+    def enhance_code_with_retries(self, code: str, enhancement_type: str = "robustness") -> str:
+        """
+        Enhance existing code with better error handling and retries.
+        """
+        if not self.openai_fixer:
+            logger.warning("OpenAI fixer not available for code enhancement")
+            return code
+        
+        try:
+            logger.info(f"Enhancing code with {enhancement_type} improvements...")
+            enhanced_code = self.openai_fixer.enhance_code_with_retries(
+                code=code,
+                enhancement_type=enhancement_type
+            )
+            
+            if enhanced_code:
+                logger.info("Code enhanced successfully")
+                return enhanced_code
+            else:
+                logger.warning("Code enhancement failed, returning original")
+                return code
+                
+        except Exception as e:
+            logger.error(f"Code enhancement failed: {e}")
+            return code
     
     def _create_file_summary(self, manifest: Dict[str, Any]) -> str:
         """Create a summary of available files for code generation"""

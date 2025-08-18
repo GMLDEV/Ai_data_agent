@@ -41,6 +41,15 @@ class SandboxExecutor:
         # Remove import restrictions
         self.allowed_imports = None
         
+        # Initialize OpenAI code fixer
+        self.openai_fixer = None
+        try:
+            from core.openai_code_fixer import OpenAICodeFixer
+            self.openai_fixer = OpenAICodeFixer()
+            logger.info("OpenAI code fixer initialized successfully")
+        except Exception as e:
+            logger.warning(f"OpenAI code fixer initialization failed: {e}")
+        
         # Create base sandbox template
         self.sandbox_template = self._create_sandbox_template()
         
@@ -216,7 +225,7 @@ class SandboxExecutor:
                          stderr: str, 
                          error_history: List[Dict]) -> Optional[str]:
         """
-        Use LLM to fix code based on error messages.
+        Use OpenAI LLM to fix code based on error messages.
         
         Args:
             code: The failing code
@@ -226,6 +235,47 @@ class SandboxExecutor:
             
         Returns:
             Fixed code or None if LLM couldn't fix it
+        """
+        logger.info("Attempting code fix with OpenAI...")
+        
+        # Try OpenAI fixer first
+        if self.openai_fixer:
+            try:
+                attempt_number = len(error_history) + 1
+                context = {
+                    "environment": "sandbox",
+                    "timeout": self.max_cpu_time_seconds,
+                    "working_dir": "temp_sandbox"
+                }
+                
+                fixed_code, metadata = self.openai_fixer.fix_code_error(
+                    code=code,
+                    error_message=error_msg,
+                    stderr=stderr,
+                    attempt_number=attempt_number,
+                    context=context
+                )
+                
+                if fixed_code and len(fixed_code.strip()) > 10:
+                    logger.info(f"OpenAI provided code fix (tokens: {metadata.get('tokens_used', 'unknown')})")
+                    return fixed_code
+                else:
+                    logger.warning("OpenAI fix was empty or too short")
+                    
+            except Exception as e:
+                logger.error(f"OpenAI code fixing failed: {e}")
+        
+        # Fallback to local LLM if OpenAI fails
+        logger.info("Falling back to local LLM for code fix...")
+        return self._fix_code_with_local_llm(code, error_msg, stderr, error_history)
+    
+    def _fix_code_with_local_llm(self, 
+                               code: str, 
+                               error_msg: str, 
+                               stderr: str, 
+                               error_history: List[Dict]) -> Optional[str]:
+        """
+        Fallback method using local LLM for code fixing.
         """
         try:
             from core.llm_client import LLMClient
@@ -278,7 +328,7 @@ REQUIREMENTS:
 RESPONSE FORMAT: Return only the Python code, nothing else.
 """
             
-            logger.info("Requesting code fix from LLM...")
+            logger.info("Requesting code fix from local LLM...")
             
             # Get fixed code from LLM
             fixed_code_response = llm_client.generate(
@@ -297,17 +347,17 @@ RESPONSE FORMAT: Return only the Python code, nothing else.
                 
                 # Validate that we got actual code
                 if len(fixed_code) > 10 and ('import ' in fixed_code or 'def ' in fixed_code or '=' in fixed_code):
-                    logger.info("LLM provided code fix")
+                    logger.info("Local LLM provided code fix")
                     return fixed_code
                 else:
-                    logger.warning("LLM response doesn't appear to be valid code")
+                    logger.warning("Local LLM response doesn't appear to be valid code")
                     return None
             else:
-                logger.warning("No valid response from LLM for code fix")
+                logger.warning("No valid response from local LLM for code fix")
                 return None
                 
         except Exception as e:
-            logger.error(f"Error getting code fix from LLM: {e}")
+            logger.error(f"Error getting code fix from local LLM: {e}")
             return None
     
     def _create_failure_result(self, 
@@ -379,8 +429,18 @@ RESPONSE FORMAT: Return only the Python code, nothing else.
         return clean_packages
 
     def _setup_sandbox_environment(self, temp_dir: str, files: Dict[str, Any], code: str):
+        """Setup the sandbox environment with files and code."""
+        
+        logger.info(f"Setting up sandbox environment in: {temp_dir}")
+        logger.info(f"Files to process: {len(files)} items")
+        logger.info(f"Code length: {len(code)} characters")
+        
+        # Log file manifest structure for debugging
+        for filename, file_info in files.items():
+            logger.debug(f"File manifest entry: {filename} -> {type(file_info)}: {repr(file_info)[:100]}")
         
         # Copy uploaded files to sandbox
+        files_copied = 0
         for filename, file_info in files.items():
             # Ensure file_info is a dictionary
             if not isinstance(file_info, dict):
@@ -392,19 +452,73 @@ RESPONSE FORMAT: Return only the Python code, nothing else.
                 dst_path = os.path.join(temp_dir, filename)
                 try:
                     shutil.copy2(src_path, dst_path)
-                    logger.info(f"Copied file {filename} to sandbox")
+                    copied_size = os.path.getsize(dst_path)
+                    logger.info(f"Copied file {filename} to sandbox ({copied_size} bytes)")
+                    files_copied += 1
                 except Exception as e:
                     logger.warning(f"Failed to copy file {filename}: {e}")
                     continue
+            else:
+                logger.warning(f"Skipping file {filename}: no 'path' key in file_info")
+        
+        logger.info(f"Successfully copied {files_copied} files to sandbox")
         
         # Create the main execution script
+        logger.info("Creating main.py execution script...")
         main_script = self._wrap_code_with_safety(code)
         
-        with open(os.path.join(temp_dir, "main.py"), "w", encoding="utf-8") as f:
-            f.write(main_script)
+        main_py_path = os.path.join(temp_dir, "main.py")
+        try:
+            with open(main_py_path, "w", encoding="utf-8") as f:
+                f.write(main_script)
+            
+            # Verify the file was written correctly
+            written_size = os.path.getsize(main_py_path)
+            logger.info(f"Created main.py ({written_size} bytes)")
+            
+            # Log a preview of the generated script for debugging
+            logger.debug(f"main.py preview: {main_script[:500]}...")
+            
+        except Exception as e:
+            logger.error(f"Failed to create main.py: {e}")
+            raise
         
         # Create requirements.txt if needed
-        self._create_requirements_file(temp_dir, code)
+        logger.info("Creating requirements.txt...")
+        try:
+            self._create_requirements_file(temp_dir, code)
+            req_path = os.path.join(temp_dir, "requirements.txt")
+            if os.path.exists(req_path):
+                req_size = os.path.getsize(req_path)
+                logger.info(f"Created requirements.txt ({req_size} bytes)")
+                
+                # Log requirements content
+                with open(req_path, "r", encoding="utf-8") as f:
+                    req_content = f.read()
+                    if req_content.strip():
+                        logger.info(f"Requirements content: {req_content.strip()}")
+                    else:
+                        logger.info("Requirements file is empty")
+            else:
+                logger.info("No requirements.txt created (no dependencies detected)")
+                
+        except Exception as e:
+            logger.warning(f"Failed to create requirements.txt: {e}")
+        
+        # List all files in sandbox for final verification
+        try:
+            sandbox_files = os.listdir(temp_dir)
+            logger.info(f"Final sandbox contents: {sandbox_files}")
+            
+            # Log file sizes
+            for filename in sandbox_files:
+                filepath = os.path.join(temp_dir, filename)
+                if os.path.isfile(filepath):
+                    size = os.path.getsize(filepath)
+                    logger.debug(f"  {filename}: {size} bytes")
+                    
+        except Exception as e:
+            logger.warning(f"Failed to list sandbox contents: {e}")
     
     def _wrap_code_with_safety(self, code: str) -> str:
         """Wrap user code with safety measures and output capture."""
@@ -472,14 +586,35 @@ try:
         if 'stream' in kwargs and kwargs['stream']:
             return original_get(url, *args, **kwargs)
         content = safe_download(url, *args, **kwargs)
-        response_obj = type('Response', (), {{'content': content, 'text': content.decode('utf-8', errors='ignore')}})()
-        return response_obj
+        
+        # Create a more complete response object
+        class MockResponse:
+            def __init__(self, content, url):
+                self.content = content
+                self.text = content.decode('utf-8', errors='ignore')
+                self.status_code = 200
+                self.url = url
+                self.headers = {{'content-type': 'text/html'}}
+                self.encoding = 'utf-8'
+            
+            def json(self):
+                import json
+                return json.loads(self.text)
+            
+            def raise_for_status(self):
+                pass  # Assume success for downloaded content
+        
+        return MockResponse(content, url)
     requests.get = patched_get
 except Exception:
     pass
 
 # Override import to auto-install missing packages
-original_import = __builtins__['__import__']
+# Handle __builtins__ being either a dict or module
+if isinstance(__builtins__, dict):
+    original_import = __builtins__['__import__']
+else:
+    original_import = __builtins__.__import__
 
 def auto_install_import(name, globals=None, locals=None, fromlist=(), level=0):
     try:
@@ -503,7 +638,11 @@ def auto_install_import(name, globals=None, locals=None, fromlist=(), level=0):
             print(f"Failed to install {{package_to_install}}")
             raise e
 
-__builtins__['__import__'] = auto_install_import
+# Set the modified import function
+if isinstance(__builtins__, dict):
+    __builtins__['__import__'] = auto_install_import
+else:
+    __builtins__.__import__ = auto_install_import
 
 def main():
     try:
@@ -611,17 +750,45 @@ if __name__ == "__main__":
     def _run_code_in_sandbox(self, temp_dir: str, timeout: int) -> Dict[str, Any]:
         """Run the code in the sandbox and capture results."""
         
+        logger.info(f"Starting sandbox execution in {temp_dir} with timeout {timeout}s")
+        
         try:
             # Change to sandbox directory
             original_cwd = os.getcwd()
+            logger.info(f"Changing directory from {original_cwd} to {temp_dir}")
             os.chdir(temp_dir)
+            
+            # Check if main.py exists and log its size
+            main_py_path = os.path.join(temp_dir, "main.py")
+            if os.path.exists(main_py_path):
+                file_size = os.path.getsize(main_py_path)
+                logger.info(f"main.py exists, size: {file_size} bytes")
+                # Log first few lines for debugging
+                with open(main_py_path, "r", encoding="utf-8", errors="replace") as f:
+                    first_lines = f.read(500)
+                    logger.debug(f"main.py preview: {repr(first_lines)}")
+            else:
+                logger.error("main.py not found!")
+                return {
+                    "success": False,
+                    "error": "main.py not found",
+                    "output": None,
+                    "stdout": "",
+                    "stderr": "main.py not found in sandbox",
+                    "return_code": -1
+                }
             
             # Set up environment variables for security
             env = os.environ.copy()
             env['PYTHONPATH'] = temp_dir
             env['HOME'] = temp_dir
+            logger.info(f"Environment setup: PYTHONPATH={temp_dir}, HOME={temp_dir}")
+            
+            # Log Python executable being used
+            logger.info(f"Using Python executable: {sys.executable}")
             
             # Run the code
+            logger.info("Starting subprocess execution...")
             if platform.system() == "Windows":
                 # Windows doesn't support os.setsid
                 process = subprocess.Popen(
@@ -632,6 +799,7 @@ if __name__ == "__main__":
                     env=env,
                     cwd=temp_dir
                 )
+                logger.info(f"Started Windows subprocess with PID: {process.pid}")
             else:
                 process = subprocess.Popen(
                     [sys.executable, "main.py"],
@@ -642,12 +810,24 @@ if __name__ == "__main__":
                     cwd=temp_dir,
                     preexec_fn=os.setsid  # Create new process group
                 )
+                logger.info(f"Started Unix subprocess with PID: {process.pid}")
             
             try:
+                logger.info(f"Waiting for process completion (timeout: {timeout}s)...")
                 stdout, stderr = process.communicate(timeout=timeout)
                 return_code = process.returncode
                 
+                logger.info(f"Process completed with return code: {return_code}")
+                logger.info(f"Raw stdout length: {len(stdout)} chars")
+                logger.info(f"Raw stderr length: {len(stderr)} chars")
+                
+                if stdout:
+                    logger.debug(f"Raw stdout preview: {repr(stdout[:300])}")
+                if stderr:
+                    logger.warning(f"Raw stderr preview: {repr(stderr[:300])}")
+                
             except subprocess.TimeoutExpired:
+                logger.warning(f"Process timed out after {timeout}s, terminating...")
                 # Kill the process group (Unix) or terminate process (Windows)
                 if platform.system() == "Windows":
                     process.terminate()
@@ -656,7 +836,9 @@ if __name__ == "__main__":
                 
                 try:
                     stdout, stderr = process.communicate(timeout=5)
+                    logger.info("Process terminated gracefully")
                 except subprocess.TimeoutExpired:
+                    logger.warning("Process did not terminate gracefully, killing...")
                     if platform.system() == "Windows":
                         process.kill()
                     else:
@@ -668,11 +850,30 @@ if __name__ == "__main__":
                     "error": f"Execution timed out after {timeout} seconds",
                     "output": None,
                     "stdout": stdout or "",
-                    "stderr": stderr or "Execution timed out"
+                    "stderr": stderr or "Execution timed out",
+                    "return_code": -1
                 }
             
             finally:
                 os.chdir(original_cwd)
+                logger.info(f"Restored working directory to {original_cwd}")
+            
+            # Check for output files and log their existence
+            output_files = ["success.txt", "stdout.txt", "stderr.txt", "error.json"]
+            files_found = []
+            files_missing = []
+            
+            for filename in output_files:
+                filepath = os.path.join(temp_dir, filename)
+                if os.path.exists(filepath):
+                    size = os.path.getsize(filepath)
+                    files_found.append(f"{filename}({size}b)")
+                else:
+                    files_missing.append(filename)
+            
+            logger.info(f"Output files found: {files_found}")
+            if files_missing:
+                logger.warning(f"Output files missing: {files_missing}")
             
             # Check if execution was successful
             success_file = os.path.join(temp_dir, "success.txt")
@@ -680,7 +881,11 @@ if __name__ == "__main__":
             
             if os.path.exists(success_file):
                 with open(success_file, "r", encoding="utf-8", errors="replace") as f:
-                    success = f.read().strip() == "true"
+                    success_content = f.read().strip()
+                    success = success_content == "true"
+                    logger.info(f"success.txt content: {repr(success_content)} -> success={success}")
+            else:
+                logger.warning("success.txt not found")
             
             # Read captured output files
             stdout_file = os.path.join(temp_dir, "stdout.txt")
@@ -694,14 +899,27 @@ if __name__ == "__main__":
             if os.path.exists(stdout_file):
                 with open(stdout_file, "r", encoding="utf-8", errors="replace") as f:
                     captured_stdout = f.read()
+                    logger.info(f"Captured stdout from file: {len(captured_stdout)} chars")
+                    if captured_stdout:
+                        logger.debug(f"Captured stdout preview: {repr(captured_stdout[:300])}")
+            else:
+                logger.warning("stdout.txt not found, using raw subprocess stdout")
+                captured_stdout = stdout or ""
             
             if os.path.exists(stderr_file):
                 with open(stderr_file, "r", encoding="utf-8", errors="replace") as f:
                     captured_stderr = f.read()
+                    logger.info(f"Captured stderr from file: {len(captured_stderr)} chars")
+                    if captured_stderr:
+                        logger.warning(f"Captured stderr preview: {repr(captured_stderr[:300])}")
+            else:
+                logger.warning("stderr.txt not found, using raw subprocess stderr")
+                captured_stderr = stderr or ""
             
             if os.path.exists(error_file):
                 with open(error_file, "r", encoding="utf-8", errors="replace") as f:
                     error_details = json.load(f)
+                    logger.error(f"Error details from file: {error_details}")
             
             # Determine final output
             output = captured_stdout.strip() if captured_stdout.strip() else None
@@ -709,11 +927,14 @@ if __name__ == "__main__":
             # Try to parse JSON output
             if output:
                 try:
-                    output = json.loads(output)
+                    parsed_output = json.loads(output)
+                    logger.info(f"Successfully parsed output as JSON: {type(parsed_output)}")
+                    output = parsed_output
                 except json.JSONDecodeError:
-                    pass  # Keep as string
+                    logger.info("Output is not valid JSON, keeping as string")
             
-            return {
+            # Final result compilation
+            result = {
                 "success": success and return_code == 0,
                 "error": error_details["error"] if error_details else None,
                 "output": output,
@@ -722,7 +943,12 @@ if __name__ == "__main__":
                 "return_code": return_code
             }
             
+            logger.info(f"Final result: success={result['success']}, error={repr(result['error'])}, output_type={type(result['output'])}")
+            
+            return result
+            
         except Exception as e:
+            logger.error(f"Critical error in sandbox execution: {e}", exc_info=True)
             return {
                 "success": False,
                 "error": str(e),
@@ -846,21 +1072,47 @@ if __name__ == "__main__":
         """Dynamically install packages in the sandbox."""
         import subprocess
         
+        logger.info(f"Installing {len(requirements)} packages: {requirements}")
+        
         for package in requirements:
             try:
                 logger.info(f"Installing package: {package}")
+                start_time = time.time()
+                
                 result = subprocess.run([
                     sys.executable, '-m', 'pip', 'install', package, '--quiet', '--no-warn-script-location'
                 ], capture_output=True, text=True, timeout=60, cwd=temp_dir)
                 
+                duration = time.time() - start_time
+                
                 if result.returncode == 0:
-                    logger.info(f"Successfully installed: {package}")
+                    logger.info(f"Successfully installed: {package} (took {duration:.1f}s)")
+                    
+                    # Verify installation by trying to import
+                    try:
+                        test_result = subprocess.run([
+                            sys.executable, '-c', f'import {package}; print(f"{package} imported successfully")'
+                        ], capture_output=True, text=True, timeout=10)
+                        
+                        if test_result.returncode == 0:
+                            logger.debug(f"Verified {package} import: {test_result.stdout.strip()}")
+                        else:
+                            logger.warning(f"Package {package} installed but import test failed: {test_result.stderr}")
+                            
+                    except Exception as verify_error:
+                        logger.warning(f"Could not verify {package} installation: {verify_error}")
+                        
                 else:
-                    logger.warning(f"Failed to install {package}: {result.stderr}")
+                    logger.warning(f"Failed to install {package} (took {duration:.1f}s)")
+                    logger.warning(f"Return code: {result.returncode}")
+                    logger.warning(f"Stderr: {result.stderr.strip()}")
+                    if result.stdout.strip():
+                        logger.warning(f"Stdout: {result.stdout.strip()}")
+                        
             except subprocess.TimeoutExpired:
-                logger.error(f"Timeout installing {package}")
+                logger.error(f"Timeout installing {package} (60s limit exceeded)")
             except Exception as e:
-                logger.error(f"Error installing {package}: {e}")
+                logger.error(f"Error installing {package}: {e}", exc_info=True)
     
     def _create_sandbox_template(self) -> str:
         """Create a template for the sandbox environment."""

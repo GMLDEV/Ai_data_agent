@@ -18,6 +18,11 @@ xlrd
 # Add to existing requirements.txt
 langchain
 langchain-openai
+# OpenAI integration for enhanced code fixing and generation
+openai>=1.0.0
+matplotlib
+seaborn
+plotly
 openai
 langchain-community
 tiktoken
