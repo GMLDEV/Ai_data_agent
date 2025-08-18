@@ -7,11 +7,10 @@ from .image_analysis import ImageAnalysisWorkflow
 # Workflow registry
 WORKFLOW_REGISTRY = {
     'data_analysis': DataAnalysisWorkflow,
-    'dynamic': DataAnalysisWorkflow,
+    'dynamic': DynamicCodeExecutionWorkflow,  # Fixed: should be DynamicCodeExecutionWorkflow, not DataAnalysisWorkflow
     'web_scraping': WebScrapingWorkflow,
     'dynamic_code_execution': DynamicCodeExecutionWorkflow,
     'image_analysis': ImageAnalysisWorkflow,
- 
 }
 
 def get_workflow_class(workflow_name: str):

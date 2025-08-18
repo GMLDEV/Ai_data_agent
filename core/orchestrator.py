@@ -85,12 +85,19 @@ class Orchestrator:
                     sandbox_executor=self.sandbox, 
                     llm_client=self.llm_client
                 ),
+                # Add alias for 'dynamic' to maintain compatibility with classifier
+                'dynamic': DynamicCodeExecutionWorkflow(
+                    code_generator=self.code_generator, 
+                    manifest=dummy_manifest,
+                    sandbox_executor=self.sandbox, 
+                    llm_client=self.llm_client
+                ),
                 'general': DataAnalysisWorkflow(
                     code_generator=self.code_generator, 
                     manifest=dummy_manifest,
                     sandbox_executor=self.sandbox, 
                     llm_client=self.llm_client
-                )  # Fallback
+                )  # Fallback for legacy compatibility
             }
             logger.info(f"📋 Initialized {len(self.workflow_registry)} workflows")
         except Exception as e:
@@ -528,29 +535,49 @@ class Orchestrator:
         """Fallback classification when LLM is not available"""
         # Simple rule-based classification
         files = manifest.get('files', {})
-        if isinstance(files, dict):
-            # Check if any files are CSV type
-            if any(file_info.get('type') == 'csv' for file_info in files.values() if isinstance(file_info, dict)):
+        questions = manifest.get('questions', '').lower()
+        file_types = manifest.get('file_types', [])
+        urls = manifest.get('urls', [])
+        
+        # Check for web-related requests first
+        if urls or any(keyword in questions for keyword in ['url', 'scrape', 'website', 'web', 'crawl']):
+            return {
+                'workflow': 'web_scraping',
+                'confidence': 0.8,
+                'reasoning': 'Web-related keywords or URLs detected'
+            }
+        
+        # Check for image analysis
+        if 'image' in file_types:
+            return {
+                'workflow': 'image_analysis', 
+                'confidence': 0.8,
+                'reasoning': 'Image files detected'
+            }
+        
+        # Check for data analysis (only when clear analysis intent)
+        if isinstance(files, dict) and any(file_info.get('type') == 'csv' for file_info in files.values() if isinstance(file_info, dict)):
+            if any(keyword in questions for keyword in ['analyze', 'analysis', 'plot', 'chart', 'statistics', 'stat', 'correlation', 'mean', 'average', 'visualize', 'trend']):
                 return {
                     'workflow': 'data_analysis',
                     'confidence': 0.8,
-                    'reasoning': 'CSV files detected - using data analysis workflow'
+                    'reasoning': 'CSV files with analysis keywords detected'
                 }
         
-        # Check for web-related keywords in the user request
-        user_request = str(manifest.get('questions', ''))
-        if any(keyword in user_request.lower() for keyword in ['url', 'scrape', 'website', 'web']):
+        # Check for programming/code generation requests
+        if any(keyword in questions for keyword in ['code', 'program', 'function', 'algorithm', 'generate', 'create', 'script', 'network', 'graph', 'networkx']):
             return {
-                'workflow': 'web_scraping',
+                'workflow': 'dynamic',
                 'confidence': 0.7,
-                'reasoning': 'Web-related keywords detected - using web scraping workflow'
+                'reasoning': 'Programming/code generation keywords detected'
             }
-        else:
-            return {
-                'workflow': 'general',
-                'confidence': 0.5,
-                'reasoning': 'No specific patterns detected - using general workflow'
-            }
+        
+        # Default to dynamic workflow for unclear cases
+        return {
+            'workflow': 'dynamic',
+            'confidence': 0.6,
+            'reasoning': 'No specific patterns detected - using dynamic workflow as default'
+        }
     
     def _validate_json_structure(self, parsed_json: Dict[str, Any], expected_structure: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """

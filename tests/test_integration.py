@@ -59,7 +59,9 @@ class TestIntegration(unittest.TestCase):
             workflows={
                 "data_analysis": cls.data_workflow,
                 "web_scraping": cls.web_workflow,
-                "image_analysis": cls.image_workflow
+                "image_analysis": cls.image_workflow,
+                "dynamic": cls.data_workflow,  # For now, use data_workflow as fallback
+                "dynamic_code_execution": cls.data_workflow  # For now, use data_workflow as fallback
             }
         )
 

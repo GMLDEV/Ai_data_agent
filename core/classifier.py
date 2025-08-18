@@ -34,12 +34,12 @@ class WorkflowClassifier:
 You are an AI workflow classifier. Analyze the user request and classify it into the most appropriate workflow.
 
 AVAILABLE WORKFLOWS:
-1. data_analysis - For CSV/data analysis, statistics, plotting, data manipulation
+1. data_analysis - For CSV/data analysis, statistics, plotting, data manipulation with existing data files
 2. web_scraping - For extracting data from websites/URLs  
 3. image_analysis - For image processing, OCR, computer vision tasks
-4. code_generation - For general programming tasks, algorithms, utilities
+4. code_generation - For simple programming tasks, algorithms, utilities
 5. multimodal - For tasks requiring multiple data types (CSV + images, etc.)
-6. dynamic - For complex or unusual requests that don't fit other categories
+6. dynamic - For complex programming tasks, network analysis, code generation when no data files, or ambiguous requests
 
 USER REQUEST: {questions}
 
@@ -48,13 +48,18 @@ FILE DETAILS: {file_info}
 URLS FOUND: {urls}
 EXTRACTED KEYWORDS: {keywords}
 
-CLASSIFICATION RULES:
-- If CSV files present + analysis keywords → data_analysis
-- If URLs present → web_scraping  
-- If image files present → image_analysis
-- If multiple file types → multimodal
-- If programming keywords but no data → code_generation
-- If unclear or complex → dynamic
+CLASSIFICATION RULES (in priority order):
+1. If URLs present → web_scraping
+2. If image files present → image_analysis  
+3. If CSV files + clear analysis intent (analyze/plot/statistics keywords) → data_analysis
+4. If multiple file types → multimodal
+5. If programming/network/graph/code keywords (especially without data files) → dynamic
+6. If simple programming keywords → code_generation
+7. If unclear or complex requests → dynamic (default)
+
+IMPORTANT: Only use data_analysis if there are CSV files AND clear analysis intent. 
+For network analysis, graph creation, or code generation requests → use dynamic workflow.
+For general programming without files → use dynamic workflow.
 
 Return ONLY valid JSON in this exact format:
 {{
@@ -62,7 +67,7 @@ Return ONLY valid JSON in this exact format:
     "confidence": 0.95,
     "reasoning": "Brief explanation of why this workflow was chosen",
     "fallback": "alternative_workflow_if_unsure",
-    "detected_intent": "user_wants_to_analyze_data" 
+    "detected_intent": "description_of_user_intent"
 }}
 """
         )
@@ -151,57 +156,77 @@ Return ONLY valid JSON in this exact format:
         keywords = manifest.get('keywords', [])
         questions = manifest.get('questions', '').lower()
         
-        # Rule-based classification
-        if 'csv' in file_types and any(word in questions for word in ['analyze', 'plot', 'chart', 'statistics', 'average', 'mean', 'correlation']):
+        # Rule-based classification with improved logic
+        
+        # 1. Web scraping - highest priority for URL-related requests
+        if urls or any(word in questions for word in ['url', 'scrape', 'website', 'web', 'crawl', 'extract from site']):
             return {
-                "workflow": "data_analysis",
-                "confidence": 0.8,
-                "reasoning": "CSV file detected with analysis keywords",
+                "workflow": "web_scraping",
+                "confidence": 0.9,
+                "reasoning": "URLs detected or web scraping keywords found",
                 "fallback": "dynamic",
                 "method": "deterministic_fallback"
             }
         
-        elif urls:
-            return {
-                "workflow": "web_scraping", 
-                "confidence": 0.8,
-                "reasoning": "URLs detected in request",
-                "fallback": "dynamic",
-                "method": "deterministic_fallback"
-            }
-        
-        elif 'image' in file_types:
+        # 2. Image analysis - for image files
+        if 'image' in file_types or any(word in questions for word in ['image', 'photo', 'picture', 'ocr', 'vision', 'detect objects']):
             return {
                 "workflow": "image_analysis",
-                "confidence": 0.8, 
-                "reasoning": "Image files detected",
+                "confidence": 0.9,
+                "reasoning": "Image files detected or image processing keywords found",
                 "fallback": "dynamic",
                 "method": "deterministic_fallback"
             }
         
-        elif len(set(file_types)) > 1:
+        # 3. Data analysis - only when clear analysis intent with CSV files
+        if 'csv' in file_types and any(word in questions for word in ['analyze', 'analysis', 'plot', 'chart', 'statistics', 'stat', 'correlation', 'mean', 'average', 'visualize', 'trend', 'explore data']):
+            return {
+                "workflow": "data_analysis",
+                "confidence": 0.9,
+                "reasoning": "CSV file detected with clear data analysis intent",
+                "fallback": "dynamic",
+                "method": "deterministic_fallback"
+            }
+        
+        # 4. Multimodal - for multiple file types
+        if len(set(file_types)) > 1:
             return {
                 "workflow": "multimodal",
-                "confidence": 0.7,
-                "reasoning": "Multiple file types detected",
+                "confidence": 0.8,
+                "reasoning": "Multiple file types detected requiring multimodal processing",
                 "fallback": "dynamic",
                 "method": "deterministic_fallback"
             }
         
-        elif any(word in questions for word in ['code', 'function', 'algorithm', 'program']):
-            return {
-                "workflow": "code_generation",
-                "confidence": 0.7,
-                "reasoning": "Programming keywords detected",
-                "fallback": "dynamic", 
-                "method": "deterministic_fallback"
-            }
-        
-        else:
+        # 5. Dynamic - for programming, code generation, complex tasks
+        if any(word in questions for word in [
+            'code', 'function', 'algorithm', 'program', 'generate', 'create', 
+            'networkx', 'network', 'graph', 'script', 'python', 'programming',
+            'implement', 'build', 'develop', 'compute', 'calculate', 'solve'
+        ]):
             return {
                 "workflow": "dynamic",
-                "confidence": 0.6,
-                "reasoning": "No clear pattern detected, using dynamic workflow",
+                "confidence": 0.8,
+                "reasoning": "Programming, code generation, or complex computation keywords detected",
                 "fallback": "code_generation",
                 "method": "deterministic_fallback"
             }
+        
+        # 6. Code generation - for simpler programming tasks
+        if any(word in questions for word in ['simple', 'basic', 'utility', 'helper', 'quick']):
+            return {
+                "workflow": "code_generation",
+                "confidence": 0.7,
+                "reasoning": "Simple programming task keywords detected",
+                "fallback": "dynamic",
+                "method": "deterministic_fallback"
+            }
+        
+        # 7. Default - dynamic workflow for unclear cases
+        return {
+            "workflow": "dynamic",
+            "confidence": 0.6,
+            "reasoning": "No clear pattern detected, using dynamic workflow as versatile default",
+            "fallback": "code_generation",
+            "method": "deterministic_fallback"
+        }
