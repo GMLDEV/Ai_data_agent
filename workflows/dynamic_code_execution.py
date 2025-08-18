@@ -87,17 +87,26 @@ class DynamicCodeExecutionWorkflow(BaseWorkflow):
                     plan["analysis_type"] = "image_analysis"
                     plan["libraries_needed"].extend(["PIL", "cv2"])
         
-        # If no files found but CSV is mentioned in questions, add it as a data source
+        # If no files found but CSV is mentioned in questions, add it as a data source with context
         if not plan["data_sources"]:
             questions_text = " ".join(questions) if isinstance(questions, list) else str(questions)
             if "edges.csv" in questions_text or ".csv" in questions_text:
                 import re
                 csv_matches = re.findall(r'`?([^`\s]+\.csv)`?', questions_text)
                 for csv_file in csv_matches:
+                    # Infer likely columns based on context
+                    columns = []
+                    if "edges" in csv_file.lower() or "edge" in questions_text.lower():
+                        columns = ["source", "target"]  # Common edge list format
+                    elif "node" in csv_file.lower() or "vertex" in questions_text.lower():
+                        columns = ["id", "label"]  # Common node list format
+                    
                     plan["data_sources"].append({
                         "type": "csv",
                         "filename": csv_file,
-                        "columns": []
+                        "columns": columns,
+                        "is_virtual": True,  # Mark as mentioned but not provided
+                        "needs_generation": True  # Flag for synthetic data generation
                     })
                     plan["analysis_type"] = "data_analysis"
                 
@@ -195,9 +204,17 @@ class DynamicCodeExecutionWorkflow(BaseWorkflow):
                     # Ensure file_manifest has the right structure for sandbox
                     sandbox_files = {}
                     if isinstance(file_manifest, dict):
-                        for filename, file_info in file_manifest.items():
-                            if isinstance(file_info, dict) and "path" in file_info:
-                                sandbox_files[filename] = file_info
+                        # Check if this is a full manifest with 'files' key
+                        if 'files' in file_manifest:
+                            files_dict = file_manifest['files']
+                            for filename, file_info in files_dict.items():
+                                if isinstance(file_info, dict) and "path" in file_info:
+                                    sandbox_files[filename] = file_info
+                        else:
+                            # Assume file_manifest is already just the files dict
+                            for filename, file_info in file_manifest.items():
+                                if isinstance(file_info, dict) and "path" in file_info:
+                                    sandbox_files[filename] = file_info
                     
                     result = executor.execute_code(
                         code=code,

@@ -2,6 +2,7 @@ from typing import Dict, List, Any
 import pandas as pd
 import json
 import logging
+import os
 from .base import BaseWorkflow
 from .dynamic_code_execution import DynamicCodeExecutionWorkflow
 from core.llm_client import LLMClient
@@ -159,9 +160,19 @@ class DataAnalysisWorkflow(BaseWorkflow):
 
             # Use enhanced execute_code with retry functionality
             logger.info("Executing data analysis code with intelligent retry system")
+            
+            # Extract just the files section from the manifest
+            files_for_sandbox = {}
+            if isinstance(file_manifest, dict) and 'files' in file_manifest:
+                files_for_sandbox = file_manifest['files']
+                logger.info(f"Extracted {len(files_for_sandbox)} files from manifest for sandbox")
+            elif isinstance(file_manifest, dict):
+                # If file_manifest is already just the files dict
+                files_for_sandbox = file_manifest
+            
             result = executor.execute_code(
                 code=code,
-                files=file_manifest,
+                files=files_for_sandbox,
                 timeout=300,  # Longer timeout for data analysis
                 allowed_libraries=['pandas', 'numpy', 'matplotlib', 'seaborn', 'plotly', 'scipy', 'sklearn']
             )
@@ -320,8 +331,22 @@ class DataAnalysisWorkflow(BaseWorkflow):
         # Infer column types from the primary CSV file
         try:
             import pandas as pd
-            # csv_file might be just a filename, make sure it's accessible
-            df = pd.read_csv(csv_file, nrows=100)
+            
+            # Check if csv_file is a path or just filename
+            file_path = csv_file
+            if not os.path.exists(csv_file):
+                # Try to find the file in the manifest
+                if hasattr(self, 'manifest') and 'files' in self.manifest:
+                    for filename, file_info in self.manifest['files'].items():
+                        if filename == csv_file and 'path' in file_info:
+                            file_path = file_info['path']
+                            logger.info(f"Using file path from manifest: {file_path}")
+                            break
+                    else:
+                        logger.warning(f"File {csv_file} not found in manifest")
+                        return {}
+            
+            df = pd.read_csv(file_path, nrows=100)
             return {col: str(dtype) for col, dtype in df.dtypes.items()}
         except Exception as e:
             logger.warning(f"Could not infer column types from {csv_file}: {e}")
@@ -332,7 +357,22 @@ class DataAnalysisWorkflow(BaseWorkflow):
         steps = []
         try:
             import pandas as pd
-            df = pd.read_csv(csv_file, nrows=100)
+            
+            # Check if csv_file is a path or just filename
+            file_path = csv_file
+            if not os.path.exists(csv_file):
+                # Try to find the file in the manifest
+                if hasattr(self, 'manifest') and 'files' in self.manifest:
+                    for filename, file_info in self.manifest['files'].items():
+                        if filename == csv_file and 'path' in file_info:
+                            file_path = file_info['path']
+                            logger.info(f"Using file path from manifest: {file_path}")
+                            break
+                    else:
+                        logger.warning(f"File {csv_file} not found in manifest")
+                        return steps
+            
+            df = pd.read_csv(file_path, nrows=100)
             if df.isnull().any().any():
                 steps.append("Handle missing values")
             # Add more cleaning suggestions as needed

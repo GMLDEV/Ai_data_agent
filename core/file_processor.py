@@ -2,6 +2,7 @@
 import os
 import re
 import mimetypes
+import tempfile
 from typing import Dict, List, Optional, Any, Union
 from pathlib import Path
 import pandas as pd
@@ -19,6 +20,9 @@ class FileProcessor:
             'image': ['.png', '.jpg', '.jpeg', '.gif', '.bmp'],
             'text': ['.txt', '.md']
         }
+        # Create a temporary directory for storing uploaded files
+        self.temp_dir = tempfile.mkdtemp(prefix="ai_data_agent_files_")
+        logger.info(f"FileProcessor initialized with temp directory: {self.temp_dir}")
     
     def create_manifest(self, files: Dict[str, bytes], questions_text: str) -> Dict[str, Any]:
         """Create a manifest of all input files and extract metadata"""
@@ -34,7 +38,17 @@ class FileProcessor:
         
         for filename, file_content in files.items():
             try:
+                # Save file to temporary location
+                file_path = os.path.join(self.temp_dir, filename)
+                with open(file_path, 'wb') as f:
+                    f.write(file_content)
+                logger.info(f"Saved file {filename} to {file_path}")
+                
+                # Analyze file and include path information
                 file_info = self._analyze_file(filename, file_content)
+                file_info['path'] = file_path  # Add the file path for sandbox access
+                file_info['temp_location'] = file_path  # Alternative key name
+                
                 manifest['files'][filename] = file_info
                 manifest['file_types'].append(file_info['type'])
             except Exception as e:
@@ -73,6 +87,23 @@ class FileProcessor:
         keywords.extend(format_keywords)
         
         return list(set(keywords))  # Remove duplicates
+    
+    def cleanup_temp_files(self):
+        """Clean up temporary files"""
+        import shutil
+        try:
+            if hasattr(self, 'temp_dir') and os.path.exists(self.temp_dir):
+                shutil.rmtree(self.temp_dir)
+                logger.info(f"Cleaned up temporary directory: {self.temp_dir}")
+        except Exception as e:
+            logger.warning(f"Failed to cleanup temp directory {getattr(self, 'temp_dir', 'unknown')}: {e}")
+    
+    def __del__(self):
+        """Cleanup on object destruction"""
+        try:
+            self.cleanup_temp_files()
+        except:
+            pass  # Ignore errors during cleanup
     
     def _analyze_file(self, filename: str, content: bytes) -> Dict[str, Any]:
         """Analyze individual file and extract metadata"""
