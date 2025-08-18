@@ -5,7 +5,7 @@ from pathlib import Path
 import json
 from datetime import datetime
 
-from core.orchestrator import LLMOrchestrator
+from core.orchestrator import Orchestrator
 from core.classifier import WorkflowClassifier
 from core.error_handler import ErrorHandler
 from core.prompt_manager import PromptManager
@@ -24,7 +24,7 @@ class RequestProcessor:
 
     def __init__(
         self,
-        orchestrator: LLMOrchestrator,
+        orchestrator: Orchestrator,
         classifier: WorkflowClassifier,
         prompt_manager: PromptManager,
         error_handler: ErrorHandler,

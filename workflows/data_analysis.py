@@ -72,13 +72,38 @@ class DataAnalysisWorkflow(BaseWorkflow):
     def generate_code(self, questions: List[str], file_manifest: Dict[str, Any], 
                      plan: Dict[str, Any]) -> str:
         """Generate specialized data analysis code."""
+        
+        # Parse the questions to extract JSON structure if specified
+        questions_text = " ".join(questions) if isinstance(questions, list) else str(questions)
+        
+        # Use expected JSON structure from base class, or try to parse from questions
+        json_structure = None
+        if hasattr(self, 'expected_json_structure') and self.expected_json_structure:
+            json_structure = self.expected_json_structure
+            logger.info(f"📋 Using pre-parsed JSON structure: {len(json_structure.get('keys', []))} keys")
+        else:
+            # Fallback: try to parse JSON structure from questions
+            try:
+                from core.question_parser import QuestionParser
+                parser = QuestionParser()
+                json_structure = parser.parse_json_structure(questions_text)
+                logger.debug(f"Parsed JSON structure from questions: {json_structure}")
+            except Exception as e:
+                logger.debug(f"Could not parse JSON structure from questions: {e}")
+        
+        # Build output format specification
+        output_format = "json"
+        if json_structure and json_structure.get('keys'):
+            output_format = f"JSON object with keys: {json_structure['keys']}"
+            logger.info(f"📋 Targeting specific JSON structure: {len(json_structure['keys'])} keys")
+        
         data_analysis_prompt = self._build_data_analysis_prompt(questions, file_manifest, plan)
         try:
             code = self.code_generator.generate_code(
-                task_description=" ".join(questions),
+                task_description=questions_text,
                 manifest=file_manifest,
                 workflow_type="data_analysis",
-                output_format="json"
+                output_format=output_format
             )
             return code
         except Exception as e:

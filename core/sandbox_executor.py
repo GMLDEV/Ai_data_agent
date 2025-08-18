@@ -24,6 +24,49 @@ class SandboxExecutor:
     and restricted environment.
     """
     
+    # Package mapping for common import/install mismatches
+    PACKAGE_MAPPING = {
+        'bs4': 'beautifulsoup4',
+        'beautifulsoup4': 'beautifulsoup4',
+        'pil': 'pillow',
+        'cv2': 'opencv-python',
+        'sklearn': 'scikit-learn',
+        'yaml': 'pyyaml',
+        'serial': 'pyserial',
+        'psycopg2': 'psycopg2-binary',
+        'mysql': 'mysql-connector-python',
+        'dateutil': 'python-dateutil',
+        'magic': 'python-magic',
+        'Crypto': 'pycryptodome',
+        'jwt': 'pyjwt',
+        'dotenv': 'python-dotenv'
+    }
+    
+    # Packages that are built-in or platform-specific and should not be installed
+    BUILTIN_MODULES = {
+        'sys', 'os', 'json', 'csv', 're', 'math', 'datetime', 'time', 'io', 'base64', 
+        'collections', 'traceback', 'signal', 'platform', 'subprocess', 'threading', 
+        'multiprocessing', 'urllib', 'http', 'email', 'html', 'xml', 'sqlite3',
+        'hashlib', 'hmac', 'secrets', 'uuid', 'pickle', 'copy', 'itertools', 'functools',
+        'operator', 'pathlib', 'tempfile', 'shutil', 'glob', 'fnmatch', 'linecache',
+        'textwrap', 'string', 'struct', 'codecs', 'locale', 'calendar', 'zoneinfo',
+        'decimal', 'fractions', 'statistics', 'random', 'bisect', 'heapq', 'array',
+        'weakref', 'types', 'enum', 'contextlib', 'abc', 'numbers', 'cmath', 'logging',
+        'argparse', 'getopt', 'configparser', 'fileinput', 'readline', 'rlcompleter',
+        'msvcrt',  # Windows-specific
+        'fcntl',   # Unix-specific  
+        'termios', # Unix-specific
+        'tty',     # Unix-specific
+        'pty',     # Unix-specific
+        'grp',     # Unix-specific
+        'pwd',     # Unix-specific
+        'spwd',    # Unix-specific
+        'crypt',   # Unix-specific
+        'nis',     # Unix-specific
+        'syslog',  # Unix-specific
+        'resource' # Unix-specific (sometimes available on Windows)
+    }
+    
     def __init__(self, 
                  max_memory_mb: int = 512,
                  max_cpu_time_seconds: int = 180,
@@ -331,13 +374,27 @@ RESPONSE FORMAT: Return only the Python code, nothing else.
             logger.info("Requesting code fix from local LLM...")
             
             # Get fixed code from LLM
-            fixed_code_response = llm_client.generate(
-                prompt=fix_prompt,
-                max_tokens=2000
-            )
+            try:
+                fixed_code_response = llm_client.generate(
+                    prompt=fix_prompt,
+                    max_tokens=2000
+                )
+            except Exception as e:
+                logger.error(f"LLM client error: {e}")
+                return None
             
             if fixed_code_response and isinstance(fixed_code_response, str):
                 fixed_code = fixed_code_response.strip()
+                
+                # Check for error messages that might be returned instead of code
+                error_indicators = [
+                    'HTTPConnectionPool', 'connection', 'failed', 'unavailable',
+                    'Max retries exceeded', 'NameResolutionError', 'getaddrinfo failed'
+                ]
+                
+                if any(indicator in fixed_code for indicator in error_indicators):
+                    logger.warning("LLM returned error message instead of code")
+                    return None
                 
                 # Clean up the response (remove markdown if present)
                 if fixed_code.startswith('```python'):
@@ -346,11 +403,11 @@ RESPONSE FORMAT: Return only the Python code, nothing else.
                     fixed_code = fixed_code.replace('```\n', '').replace('```', '')
                 
                 # Validate that we got actual code
-                if len(fixed_code) > 10 and ('import ' in fixed_code or 'def ' in fixed_code or '=' in fixed_code):
+                if len(fixed_code) > 10 and ('import ' in fixed_code or 'def ' in fixed_code or '=' in fixed_code or 'print(' in fixed_code):
                     logger.info("Local LLM provided code fix")
                     return fixed_code
                 else:
-                    logger.warning("Local LLM response doesn't appear to be valid code")
+                    logger.warning(f"Local LLM response doesn't appear to be valid code: {fixed_code[:100]}...")
                     return None
             else:
                 logger.warning("No valid response from local LLM for code fix")
@@ -421,10 +478,18 @@ RESPONSE FORMAT: Return only the Python code, nothing else.
             # Map common package names
             pkg = pkg.strip().replace('"', '').replace("'", "")
             if pkg and pkg not in clean_packages:
+                # Skip built-in modules that can't be pip installed
+                if pkg in self.BUILTIN_MODULES:
+                    logger.debug(f"Skipping built-in module in error detection: {pkg}")
+                    continue
+                    
                 # Map to installable names
                 mapped_pkg = self.PACKAGE_MAPPING.get(pkg.lower(), pkg)
                 if mapped_pkg not in clean_packages:
                     clean_packages.append(mapped_pkg)
+        
+        if clean_packages:
+            logger.info(f"Detected missing packages: {clean_packages}")
         
         return clean_packages
 
@@ -620,6 +685,26 @@ def auto_install_import(name, globals=None, locals=None, fromlist=(), level=0):
     try:
         return original_import(name, globals, locals, fromlist, level)
     except ImportError as e:
+        # Built-in modules that should not be installed
+        builtin_modules = {{
+            'sys', 'os', 'json', 'csv', 're', 'math', 'datetime', 'time', 'io', 'base64', 
+            'collections', 'traceback', 'signal', 'platform', 'subprocess', 'threading', 
+            'multiprocessing', 'urllib', 'http', 'email', 'html', 'xml', 'sqlite3',
+            'hashlib', 'hmac', 'secrets', 'uuid', 'pickle', 'copy', 'itertools', 'functools',
+            'operator', 'pathlib', 'tempfile', 'shutil', 'glob', 'fnmatch', 'linecache',
+            'textwrap', 'string', 'struct', 'codecs', 'locale', 'calendar', 'zoneinfo',
+            'decimal', 'fractions', 'statistics', 'random', 'bisect', 'heapq', 'array',
+            'weakref', 'types', 'enum', 'contextlib', 'abc', 'numbers', 'cmath', 'logging',
+            'argparse', 'getopt', 'configparser', 'fileinput', 'readline', 'rlcompleter',
+            'msvcrt', 'fcntl', 'termios', 'tty', 'pty', 'grp', 'pwd', 'spwd', 'crypt', 
+            'nis', 'syslog', 'resource'
+        }}
+        
+        # Skip built-in modules
+        if name in builtin_modules:
+            print(f"Skipping built-in module: {{name}}")
+            raise e
+        
         # Common package mappings for auto-install
         package_map = {{
             'bs4': 'beautifulsoup4',
@@ -1044,21 +1129,44 @@ if __name__ == "__main__":
         imports = set()
         for line in code.split('\n'):
             line = line.strip()
+            # Skip empty lines and comments
+            if not line or line.startswith('#'):
+                continue
+                
             if line.startswith('import '):
-                module = line.replace('import ', '').split('.')[0].split(' as ')[0].split(',')[0].strip()
-                imports.add(module)
+                # Handle "import module" and "import module as alias"
+                import_part = line.replace('import ', '').split('#')[0].strip()  # Remove comments
+                modules = import_part.split(',')
+                for module in modules:
+                    module = module.split('.')[0].split(' as ')[0].strip()
+                    if module:
+                        imports.add(module)
             elif line.startswith('from '):
-                module = line.split(' ')[1].split('.')[0]
-                imports.add(module)
+                # Handle "from module import something"
+                import_part = line.split('#')[0].strip()  # Remove comments
+                if ' import ' in import_part:
+                    module = import_part.split(' ')[1].split('.')[0].strip()
+                    if module:
+                        imports.add(module)
         
         # Create requirements.txt with auto-install
         requirements = []
         for imp in imports:
+            # Skip built-in modules
+            if imp in self.BUILTIN_MODULES:
+                logger.debug(f"Skipping built-in module: {imp}")
+                continue
+                
             if imp in package_mapping:
-                requirements.append(package_mapping[imp])
-            elif imp not in ['sys', 'os', 'json', 'csv', 're', 'math', 'datetime', 'time', 'io', 'base64', 'collections', 'traceback', 'signal', 'platform']:
+                req = package_mapping[imp]
+                if req not in requirements:
+                    requirements.append(req)
+                    logger.debug(f"Mapped import '{imp}' to package '{req}'")
+            elif len(imp) > 1:  # Avoid single-letter imports
                 # For unknown packages, try to install them directly
-                requirements.append(imp)
+                if imp not in requirements:
+                    requirements.append(imp)
+                    logger.debug(f"Adding unknown package for installation: {imp}")
         
         if requirements:
             requirements_path = os.path.join(temp_dir, "requirements.txt")
@@ -1075,6 +1183,11 @@ if __name__ == "__main__":
         logger.info(f"Installing {len(requirements)} packages: {requirements}")
         
         for package in requirements:
+            # Skip built-in modules that can't be pip installed
+            if package in self.BUILTIN_MODULES:
+                logger.debug(f"Skipping built-in module: {package}")
+                continue
+                
             try:
                 logger.info(f"Installing package: {package}")
                 start_time = time.time()
@@ -1090,17 +1203,37 @@ if __name__ == "__main__":
                     
                     # Verify installation by trying to import
                     try:
+                        # For certain packages, we need to import with different names
+                        import_names = {
+                            'beautifulsoup4': 'bs4',
+                            'pillow': 'PIL', 
+                            'opencv-python': 'cv2',
+                            'scikit-learn': 'sklearn',
+                            'pyyaml': 'yaml',
+                            'pyserial': 'serial',
+                            'psycopg2-binary': 'psycopg2',
+                            'mysql-connector-python': 'mysql.connector',
+                            'python-dateutil': 'dateutil',
+                            'python-magic': 'magic',
+                            'pycryptodome': 'Crypto',
+                            'pyjwt': 'jwt',
+                            'python-dotenv': 'dotenv'
+                        }
+                        
+                        # Use the correct import name for testing
+                        test_import = import_names.get(package, package)
+                        
                         test_result = subprocess.run([
-                            sys.executable, '-c', f'import {package}; print(f"{package} imported successfully")'
+                            sys.executable, '-c', f'import {test_import}; print(f"{test_import} imported successfully")'
                         ], capture_output=True, text=True, timeout=10)
                         
                         if test_result.returncode == 0:
-                            logger.debug(f"Verified {package} import: {test_result.stdout.strip()}")
+                            logger.debug(f"Verified {package} import as '{test_import}': {test_result.stdout.strip()}")
                         else:
-                            logger.warning(f"Package {package} installed but import test failed: {test_result.stderr}")
+                            logger.debug(f"Package {package} installed but import test for '{test_import}' had issues (this may be normal): {test_result.stderr}")
                             
                     except Exception as verify_error:
-                        logger.warning(f"Could not verify {package} installation: {verify_error}")
+                        logger.debug(f"Could not verify {package} installation: {verify_error}")
                         
                 else:
                     logger.warning(f"Failed to install {package} (took {duration:.1f}s)")

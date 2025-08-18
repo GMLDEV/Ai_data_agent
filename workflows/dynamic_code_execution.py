@@ -116,6 +116,13 @@ class DynamicCodeExecutionWorkflow(BaseWorkflow):
                      plan: Dict[str, Any]) -> str:
         """Generate Python code based on the execution plan."""
         
+        # Use expected JSON structure if available
+        output_format = plan.get("output_format", "json")
+        if hasattr(self, 'expected_json_structure') and self.expected_json_structure:
+            if self.expected_json_structure.get('keys'):
+                output_format = f"JSON object with keys: {self.expected_json_structure['keys']}"
+                logger.info(f"📋 Dynamic code execution targeting JSON structure: {len(self.expected_json_structure['keys'])} keys")
+        
         code_prompt = self._build_code_generation_prompt(questions, file_manifest, plan)
         
         try:
@@ -123,7 +130,7 @@ class DynamicCodeExecutionWorkflow(BaseWorkflow):
                 task_description=" ".join(questions),
                 manifest=file_manifest,
                 workflow_type="dynamic_code_execution",
-                output_format=plan.get("output_format", "json")
+                output_format=output_format
             )
             logger.info("Generated code successfully")
             return code

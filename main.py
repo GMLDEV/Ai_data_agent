@@ -5,25 +5,53 @@ from typing import List, Optional, Dict, Any
 import logging
 from pathlib import Path
 import uvicorn
+import os
 
 # Import our modules
 from core.file_processor import FileProcessor
-from core.orchestrator import LLMOrchestrator
+from core.orchestrator import Orchestrator  # Changed from LLMOrchestrator to Orchestrator
 from sandbox.executor import SandboxExecutor
 from config import settings
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# Configure comprehensive logging
+def setup_logging():
+    """Setup comprehensive logging configuration"""
+    # Get log level from environment or default to INFO
+    log_level = os.getenv('LOG_LEVEL', 'INFO').upper()
+    
+    # Setup root logger
+    logging.basicConfig(
+        level=getattr(logging, log_level),
+        format='%(asctime)s | %(name)s | %(levelname)s | [%(filename)s:%(lineno)d] | %(message)s',
+        handlers=[
+            logging.StreamHandler(),  # Console output
+        ]
+    )
+    
+    # Set specific loggers for detailed debugging
+    loggers_config = {
+        'core.orchestrator': logging.DEBUG,
+        'core.sandbox_executor': logging.DEBUG,
+        'core.code_generator': logging.DEBUG,
+        'workflows': logging.DEBUG,
+        'uvicorn.access': logging.INFO,
+        'uvicorn.error': logging.INFO,
+    }
+    
+    for logger_name, level in loggers_config.items():
+        logging.getLogger(logger_name).setLevel(level)
+
+# Initialize logging
+setup_logging()
 logger = logging.getLogger(__name__)
+
+logger.info("🚀 Starting AI Data Agent with comprehensive logging...")
 
 # Create FastAPI app
 app = FastAPI(
-    title="LLM Orchestrator",
-    description="AI-powered data analysis and task automation system",
-    version="1.0.0"
+    title="AI Data Agent",
+    description="AI-powered data analysis and task automation system with comprehensive logging",
+    version="2.0.0"
 )
 
 # Add CORS middleware
@@ -37,20 +65,25 @@ app.add_middleware(
 
 # Initialize core components
 file_processor = FileProcessor()
-orchestrator = LLMOrchestrator()
-sandbox_executor = SandboxExecutor(
-    settings.sandbox_memory_limit,
-    settings.sandbox_cpu_limit,
-    settings.max_execution_time
-)
+orchestrator = Orchestrator(llm_available=True)  # Use new Orchestrator class
+logger.info("✅ Core components initialized successfully")
 
+# Health check endpoint
 @app.get("/")
 async def root():
-    """Root endpoint"""
+    """Root endpoint with system status"""
     return {
-        "message": "LLM Orchestrator API",
-        "version": "1.0.0",
-        "status": "running"
+        "message": "AI Data Agent API with Enhanced Logging",
+        "version": "2.0.0",
+        "status": "healthy",
+        "logging": "comprehensive Docker logging enabled",
+        "features": [
+            "OpenAI GPT-4 powered code generation",
+            "Intelligent retry system",
+            "Clean API responses",
+            "Comprehensive Docker logging",
+            "Task-aware code generation"
+        ]
     }
 
 @app.get("/health")
@@ -100,7 +133,7 @@ async def test_upload(
 async def test_sandbox():
     """Test sandbox execution"""
     try:
-        result = sandbox_executor.test_sandbox()
+        result = orchestrator.sandbox.test_sandbox()
         return {
             "message": "Sandbox test completed",
             "result": result
@@ -116,7 +149,7 @@ async def execute_code(code: str = Form(...)):
         if not code.strip():
             raise HTTPException(status_code=400, detail="Code cannot be empty")
         
-        result = sandbox_executor.execute_simple(code)
+        result = orchestrator.sandbox.execute_simple(code)
         return {
             "message": "Code execution completed",
             "result": result

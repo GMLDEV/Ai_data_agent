@@ -8,6 +8,12 @@ class BaseWorkflow(ABC):
         self.manifest = manifest
         self.logger = logging.getLogger(self.__class__.__name__)
         self.max_retries = 3
+        self.expected_json_structure = None
+    
+    def set_expected_structure(self, structure: Dict[str, Any]):
+        """Set the expected JSON output structure"""
+        self.expected_json_structure = structure
+        self.logger.info(f"Set expected JSON structure: {structure}")
     
     @abstractmethod
     def get_workflow_type(self) -> str:
@@ -29,11 +35,18 @@ class BaseWorkflow(ABC):
     def generate_code(self, questions: List[str], file_manifest: Dict[str, Any], plan: Dict[str, Any], output_format: str = "json") -> str:
         """Generate Python code for the task - base implementation"""
         task_description = " ".join(questions) if isinstance(questions, list) else str(questions)
+        
+        # Include expected JSON structure in output format if available
+        if self.expected_json_structure:
+            detailed_output_format = f"json with structure: {self.expected_json_structure}"
+        else:
+            detailed_output_format = output_format
+        
         return self.code_generator.generate_code(
             task_description=task_description,
             manifest=file_manifest,
             workflow_type=self.get_workflow_type(),
-            output_format=output_format
+            output_format=detailed_output_format
         )
     
     def execute(self, sandbox_executor, task_description: str) -> Dict[str, Any]:

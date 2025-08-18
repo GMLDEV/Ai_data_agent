@@ -15,6 +15,16 @@ services:
       - ollama
     environment:
       - LLM_ENDPOINT=http://ollama:11434/api/generate
+      - PYTHONUNBUFFERED=1  # Ensure Python output is not buffered
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "10"
+    # Labels for log identification
+    labels:
+      - "logging.level=debug"
+      - "service.name=ai-data-agent"
 
   ollama:
     image: ollama/ollama:latest
@@ -25,6 +35,11 @@ services:
       - ollama_data:/root/.ollama
     restart: unless-stopped
     command: serve
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
 
 volumes:
   ollama_data:

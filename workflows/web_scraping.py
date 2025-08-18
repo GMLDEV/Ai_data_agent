@@ -76,12 +76,19 @@ class WebScrapingWorkflow(BaseWorkflow):
         """
         Prompt LLM to write a Python script for scraping and navigation.
         """
+        # Use expected JSON structure if available
+        output_format = "json"
+        if hasattr(self, 'expected_json_structure') and self.expected_json_structure:
+            if self.expected_json_structure.get('keys'):
+                output_format = f"JSON object with keys: {self.expected_json_structure['keys']}"
+                logger.info(f"📋 Web scraping targeting JSON structure: {len(self.expected_json_structure['keys'])} keys")
+        
         prompt = self._build_scraping_code_prompt(questions, plan)
         code = self.code_generator.generate_code(
             task_description=" ".join(questions),
             manifest=file_manifest,
             workflow_type="web_scraping",
-            output_format="json"
+            output_format=output_format
         )
         return code
 
