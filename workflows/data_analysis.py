@@ -39,8 +39,27 @@ class DataAnalysisWorkflow(BaseWorkflow):
         # Start with dynamic workflow plan
         base_plan = self.dynamic_workflow.plan(questions, file_manifest, keywords, urls)
         
+        # Extract actual files from manifest structure
+        actual_files = file_manifest.get('files', {}) if isinstance(file_manifest, dict) else file_manifest
+        
         # Enhance with data analysis specific details
-        csv_files = [f for f, info in file_manifest.items() if info.get("type") == "csv"]
+        csv_files = []
+        if isinstance(actual_files, dict):
+            csv_files = [f for f, info in actual_files.items() if isinstance(info, dict) and info.get("type") == "csv"]
+        
+        # If no CSV files in the files section, check if edges.csv is mentioned in questions
+        if not csv_files:
+            questions_text = " ".join(questions) if isinstance(questions, list) else str(questions)
+            if "edges.csv" in questions_text:
+                csv_files = ["edges.csv"]
+                logger.info("Detected edges.csv from questions text")
+            elif ".csv" in questions_text:
+                # Try to extract CSV filenames from questions
+                import re
+                csv_matches = re.findall(r'`?([^`\s]+\.csv)`?', questions_text)
+                if csv_matches:
+                    csv_files = csv_matches
+                    logger.info(f"Extracted CSV files from questions: {csv_files}")
         
         if not csv_files:
             raise ValueError("No CSV files found for data analysis workflow")
@@ -242,12 +261,25 @@ class DataAnalysisWorkflow(BaseWorkflow):
         return vis
 
     def _extract_grouping_variables(self, questions_text: str, file_manifest: Dict[str, Any]) -> List[str]:
-        prompt = (
-            f"Given the question: '{questions_text}' and columns: {list(file_manifest.values())[0].get('columns', [])}, "
-            "list the grouping variables as a Python list."
-        )
-        response = self.llm_client.generate(prompt)
         try:
+            # Extract actual files from manifest structure
+            actual_files = file_manifest.get('files', {}) if isinstance(file_manifest, dict) else file_manifest
+            
+            if not actual_files:
+                return []
+            
+            # Get columns from the first CSV file if available
+            columns = []
+            for filename, file_info in actual_files.items():
+                if isinstance(file_info, dict) and file_info.get('type') == 'csv':
+                    columns = file_info.get('columns', [])
+                    break
+            
+            prompt = (
+                f"Given the question: '{questions_text}' and columns: {columns}, "
+                "list the grouping variables as a Python list."
+            )
+            response = self.llm_client.generate(prompt)
             import json
             if response.strip().startswith('['):
                 return json.loads(response)
@@ -257,20 +289,31 @@ class DataAnalysisWorkflow(BaseWorkflow):
             return []
 
     def _extract_target_variables(self, questions_text: str, file_manifest: Dict[str, Any]) -> List[str]:
-        prompt = (
-            f"Given the question: '{questions_text}' and columns: {list(file_manifest.values())[0].get('columns', [])}, "
-            "list the target variables as a Python list."
-        )
-        response = self.llm_client.generate(prompt)
         try:
+            # Extract actual files from manifest structure
+            actual_files = file_manifest.get('files', {}) if isinstance(file_manifest, dict) else file_manifest
+            
+            if not actual_files:
+                return []
+            
+            # Get columns from the first CSV file if available
+            columns = []
+            for filename, file_info in actual_files.items():
+                if isinstance(file_info, dict) and file_info.get('type') == 'csv':
+                    columns = file_info.get('columns', [])
+                    break
+            
+            prompt = (
+                f"Given the question: '{questions_text}' and columns: {columns}, "
+                "list the target variables as a Python list."
+            )
+            response = self.llm_client.generate(prompt)
             import json
             if response.strip().startswith('['):
                 return json.loads(response)
             else:
                 return []
         except (json.JSONDecodeError, Exception):
-            return []
-        except Exception:
             return []
 
     def _infer_column_types(self, csv_file: str) -> Dict[str, str]:

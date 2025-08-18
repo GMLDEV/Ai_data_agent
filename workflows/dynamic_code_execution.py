@@ -60,28 +60,46 @@ class DynamicCodeExecutionWorkflow(BaseWorkflow):
             "libraries_needed": ["pandas", "numpy"]
         }
         
-        # Analyze file manifest
-        for filename, file_info in file_manifest.items():
-            # Ensure file_info is a dictionary
-            if not isinstance(file_info, dict):
-                logger.warning(f"Skipping file {filename}: file_info is not a dict, got {type(file_info)}")
-                continue
-                
-            if file_info.get("type") == "csv":
-                plan["data_sources"].append({
-                    "type": "csv",
-                    "filename": filename,
-                    "columns": file_info.get("columns", [])
-                })
-                plan["analysis_type"] = "data_analysis"
-                
-            elif file_info.get("type") in ["png", "jpg", "jpeg"]:
-                plan["data_sources"].append({
-                    "type": "image",
-                    "filename": filename
-                })
-                plan["analysis_type"] = "image_analysis"
-                plan["libraries_needed"].extend(["PIL", "cv2"])
+        # Extract actual files from manifest structure
+        actual_files = file_manifest.get('files', {}) if isinstance(file_manifest, dict) else file_manifest
+        
+        # Analyze file manifest - only iterate over actual files
+        if isinstance(actual_files, dict):
+            for filename, file_info in actual_files.items():
+                # Ensure file_info is a dictionary
+                if not isinstance(file_info, dict):
+                    logger.warning(f"Skipping file {filename}: file_info is not a dict, got {type(file_info)}")
+                    continue
+                    
+                if file_info.get("type") == "csv":
+                    plan["data_sources"].append({
+                        "type": "csv",
+                        "filename": filename,
+                        "columns": file_info.get("columns", [])
+                    })
+                    plan["analysis_type"] = "data_analysis"
+                    
+                elif file_info.get("type") in ["png", "jpg", "jpeg"]:
+                    plan["data_sources"].append({
+                        "type": "image",
+                        "filename": filename
+                    })
+                    plan["analysis_type"] = "image_analysis"
+                    plan["libraries_needed"].extend(["PIL", "cv2"])
+        
+        # If no files found but CSV is mentioned in questions, add it as a data source
+        if not plan["data_sources"]:
+            questions_text = " ".join(questions) if isinstance(questions, list) else str(questions)
+            if "edges.csv" in questions_text or ".csv" in questions_text:
+                import re
+                csv_matches = re.findall(r'`?([^`\s]+\.csv)`?', questions_text)
+                for csv_file in csv_matches:
+                    plan["data_sources"].append({
+                        "type": "csv",
+                        "filename": csv_file,
+                        "columns": []
+                    })
+                    plan["analysis_type"] = "data_analysis"
                 
         # Analyze URLs
         if urls:
