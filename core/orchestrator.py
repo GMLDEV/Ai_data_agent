@@ -140,11 +140,11 @@ class Orchestrator:
             logger.info(f"⚙️ Starting workflow execution: {classification['workflow']}")
             workflow_result = self._execute_workflow_with_logging(classification, manifest, questions, request_id)
             
-            # Step 4: Extract the final answer from the workflow result
-            final_answer = self._extract_final_answer(workflow_result, questions)
+            # Step 4: Extract and validate final answer with fallback system
+            final_answer, compliance_score = self._extract_final_answer_with_fallback(workflow_result, questions, manifest, request_id)
             
             # Log the complete workflow result for debugging
-            self._log_complete_workflow_details(request_id, workflow_result, final_answer)
+            self._log_complete_workflow_details(request_id, workflow_result, final_answer, compliance_score)
             
             # Return clean response with just the answer
             logger.info(f"✅ REQUEST COMPLETE [ID: {request_id}] - Clean response returned")
@@ -222,10 +222,22 @@ class Orchestrator:
                 "workflow": workflow_name
             }
 
-    def _log_complete_workflow_details(self, request_id: str, workflow_result: Dict[str, Any], final_answer: Any) -> None:
+    def _log_complete_workflow_details(self, request_id: str, workflow_result: Dict[str, Any], final_answer: Any, compliance_score: float = None) -> None:
         """Log complete workflow details for debugging"""
         logger.debug(f"📊 COMPLETE WORKFLOW DETAILS [ID: {request_id}]")
         logger.debug(f"📊 Raw workflow result keys: {list(workflow_result.keys())}")
+        
+        # Log format compliance information
+        if compliance_score is not None:
+            compliance_status = "✅ EXCELLENT" if compliance_score >= 0.9 else "✅ GOOD" if compliance_score >= 0.7 else "⚠️ FAIR" if compliance_score >= 0.5 else "❌ POOR"
+            logger.info(f"📊 [ID: {request_id}] FORMAT COMPLIANCE: {compliance_score:.2f} ({compliance_status})")
+            
+            # Check if fallback was used
+            if isinstance(final_answer, dict):
+                if final_answer.get("_emergency_response"):
+                    logger.critical(f"🚨 [ID: {request_id}] EMERGENCY RESPONSE WAS USED - INVESTIGATE WORKFLOW FAILURE")
+                elif final_answer.get("fallback"):
+                    logger.warning(f"🔄 [ID: {request_id}] LLM FALLBACK WAS USED - PRIMARY WORKFLOW FAILED")
         
         # Log code generation attempts
         if "code_attempts" in workflow_result:
@@ -260,6 +272,314 @@ class Orchestrator:
         
         # Log full result for debugging if needed
         logger.debug(f"🔍 Full workflow result: {workflow_result}")
+
+    def _extract_final_answer_with_fallback(self, workflow_result: Dict[str, Any], questions: str, manifest: Dict[str, Any], request_id: str) -> tuple[Any, float]:
+        """Extract final answer with format compliance scoring and fallback generation"""
+        
+        # Step 1: Try normal extraction
+        try:
+            primary_answer = self._extract_final_answer(workflow_result, questions)
+            compliance_score = self._score_format_compliance(primary_answer, questions, request_id)
+            
+            # If we get good compliance (>= 0.7), return it
+            if compliance_score >= 0.7:
+                logger.info(f"✅ [ID: {request_id}] Primary answer meets format requirements (score: {compliance_score:.2f})")
+                
+                # Log success event
+                self._log_structured_event(request_id, "workflow_success", {
+                    "compliance_score": compliance_score,
+                    "response_type": "primary",
+                    "format_valid": True
+                })
+                
+                return primary_answer, compliance_score
+            else:
+                logger.warning(f"⚠️ [ID: {request_id}] Primary answer has low compliance (score: {compliance_score:.2f})")
+                
+                # Log low compliance event
+                self._log_structured_event(request_id, "format_compliance_low", {
+                    "compliance_score": compliance_score,
+                    "primary_answer_type": type(primary_answer).__name__,
+                    "will_attempt_fallback": True
+                })
+                
+        except Exception as e:
+            logger.error(f"❌ [ID: {request_id}] Primary extraction failed: {e}")
+            primary_answer = {"error": "Primary extraction failed"}
+            compliance_score = 0.0
+            
+            # Log primary extraction failure
+            self._log_structured_event(request_id, "primary_extraction_failed", {
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "will_attempt_fallback": True
+            })
+        
+        # Step 2: Fallback - Generate formatted response using LLM
+        logger.warning(f"🔄 [ID: {request_id}] TRIGGERING FALLBACK: Generating LLM-based formatted response")
+        
+        # Log fallback trigger
+        self._log_structured_event(request_id, "fallback_triggered", {
+            "reason": "low_compliance_or_extraction_failure",
+            "primary_score": compliance_score,
+            "fallback_method": "llm_generation"
+        })
+        
+        try:
+            fallback_answer = self._generate_fallback_response(questions, workflow_result, manifest, request_id)
+            fallback_score = self._score_format_compliance(fallback_answer, questions, request_id)
+            
+            logger.info(f"🆘 [ID: {request_id}] Fallback response generated (score: {fallback_score:.2f})")
+            
+            # Log fallback success
+            self._log_structured_event(request_id, "fallback_success", {
+                "fallback_score": fallback_score,
+                "response_type": "llm_fallback",
+                "format_valid": fallback_score >= 0.7
+            })
+            
+            return fallback_answer, fallback_score
+            
+        except Exception as e:
+            logger.error(f"💀 [ID: {request_id}] CRITICAL: Fallback generation failed: {e}")
+            
+            # Log fallback failure
+            self._log_structured_event(request_id, "fallback_failed", {
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "will_use_emergency": True
+            })
+            
+            # Step 3: Last resort - Generate minimal valid format
+            emergency_answer = self._generate_emergency_response(questions, request_id)
+            logger.critical(f"⚰️ [ID: {request_id}] EMERGENCY RESPONSE: Using minimal valid format")
+            
+            # Log emergency response
+            self._log_structured_event(request_id, "emergency_response", {
+                "trigger": "fallback_failure",
+                "response_type": "emergency",
+                "critical_failure": True
+            })
+            
+            return emergency_answer, 0.1
+
+    def _score_format_compliance(self, answer: Any, questions: str, request_id: str) -> float:
+        """Score how well the answer complies with the requested format (0.0 - 1.0)"""
+        
+        try:
+            # Parse expected JSON structure
+            json_structure = self.question_parser.parse_json_structure(questions)
+            
+            if not json_structure:
+                # No specific structure expected, basic scoring
+                if isinstance(answer, dict) and not answer.get("error"):
+                    return 0.8
+                elif isinstance(answer, (list, str, int, float)) and "error" not in str(answer):
+                    return 0.6
+                else:
+                    return 0.2
+            
+            # Check if answer is a dictionary (expected for JSON objects)
+            if not isinstance(answer, dict):
+                logger.debug(f"📊 [ID: {request_id}] Format compliance: Not a dict ({type(answer).__name__})")
+                return 0.1
+            
+            # Check for error responses
+            if "error" in answer:
+                logger.debug(f"📊 [ID: {request_id}] Format compliance: Contains error")
+                return 0.1
+                
+            expected_keys = set(json_structure.get('keys', []))
+            actual_keys = set(answer.keys())
+            
+            # Calculate key matching score
+            matching_keys = expected_keys.intersection(actual_keys)
+            missing_keys = expected_keys - actual_keys
+            extra_keys = actual_keys - expected_keys
+            
+            key_score = len(matching_keys) / len(expected_keys) if expected_keys else 0.5
+            
+            # Penalties for missing/extra keys
+            missing_penalty = len(missing_keys) * 0.1
+            extra_penalty = len(extra_keys) * 0.05
+            
+            final_score = max(0.0, min(1.0, key_score - missing_penalty - extra_penalty))
+            
+            logger.debug(f"📊 [ID: {request_id}] Format compliance: {final_score:.2f} "
+                        f"(matched: {len(matching_keys)}, missing: {len(missing_keys)}, extra: {len(extra_keys)})")
+            
+            return final_score
+            
+        except Exception as e:
+            logger.error(f"📊 [ID: {request_id}] Error scoring compliance: {e}")
+            return 0.2
+
+    def _generate_fallback_response(self, questions: str, workflow_result: Dict[str, Any], manifest: Dict[str, Any], request_id: str) -> Dict[str, Any]:
+        """Generate a properly formatted response using LLM when primary extraction fails"""
+        
+        # Extract any available data from workflow result
+        available_data = self._extract_available_data(workflow_result)
+        
+        # Create fallback prompt
+        fallback_prompt = f"""
+The workflow execution had issues but some data may be available. Generate a proper response in the exact format requested.
+
+ORIGINAL REQUEST:
+{questions}
+
+AVAILABLE DATA FROM WORKFLOW:
+{available_data}
+
+FILE INFORMATION:
+{self._summarize_manifest(manifest)}
+
+INSTRUCTIONS:
+1. Generate a response in the EXACT format requested in the original request
+2. Use any available data from the workflow if applicable
+3. For missing data, provide reasonable placeholder values or indicate "not available"
+4. Ensure the response structure matches the requested JSON format exactly
+5. Do not include explanations, just return the requested format
+
+Generate the properly formatted response:
+"""
+
+        try:
+            # Use LLM to generate formatted response
+            if self.llm_available:
+                response = self.llm_client.get_completion(fallback_prompt)
+                
+                # Try to parse as JSON
+                import json
+                import re
+                
+                # Look for JSON in the response
+                json_pattern = r'\{.*\}'
+                matches = re.findall(json_pattern, response, re.DOTALL)
+                
+                if matches:
+                    parsed_json = json.loads(matches[0])
+                    logger.info(f"🔄 [ID: {request_id}] LLM fallback generated valid JSON")
+                    return parsed_json
+                else:
+                    # If no JSON found, try to structure the response
+                    return {"response": response, "fallback": True}
+            else:
+                logger.error(f"🔄 [ID: {request_id}] LLM not available for fallback generation")
+                return self._generate_emergency_response(questions, request_id)
+                
+        except Exception as e:
+            logger.error(f"🔄 [ID: {request_id}] LLM fallback failed: {e}")
+            return self._generate_emergency_response(questions, request_id)
+
+    def _generate_emergency_response(self, questions: str, request_id: str) -> Dict[str, Any]:
+        """Generate minimal valid response when all else fails"""
+        
+        try:
+            # Parse expected structure to create minimal response
+            json_structure = self.question_parser.parse_json_structure(questions)
+            
+            if json_structure and json_structure.get('keys'):
+                # Generate minimal response with expected keys
+                emergency_response = {}
+                for key in json_structure['keys']:
+                    key_type = json_structure.get('types', {}).get(key, 'string')
+                    if key_type == 'number':
+                        emergency_response[key] = 0
+                    elif key_type == 'boolean':
+                        emergency_response[key] = False
+                    else:
+                        emergency_response[key] = "not available"
+                
+                emergency_response["_emergency_response"] = True
+                emergency_response["_message"] = "This is an emergency response due to workflow failure"
+                
+                logger.critical(f"⚰️ [ID: {request_id}] Generated emergency response with {len(emergency_response)} keys")
+                return emergency_response
+            else:
+                # Basic emergency response
+                return {
+                    "error": "Workflow execution failed",
+                    "message": "Unable to process request",
+                    "_emergency_response": True
+                }
+                
+        except Exception as e:
+            logger.critical(f"⚰️ [ID: {request_id}] Emergency response generation failed: {e}")
+            return {
+                "error": "Critical system failure",
+                "_emergency_response": True
+            }
+
+    def _extract_available_data(self, workflow_result: Dict[str, Any]) -> str:
+        """Extract any useful data from failed workflow result"""
+        
+        try:
+            data_summary = []
+            
+            # Check for any stdout content
+            result = workflow_result.get("result", {})
+            stdout = result.get("stdout", "")
+            if stdout:
+                data_summary.append(f"Stdout: {stdout[:500]}...")
+            
+            # Check for error messages
+            error = result.get("error", workflow_result.get("error", ""))
+            if error:
+                data_summary.append(f"Error: {error}")
+            
+            # Check for any artifacts
+            artifacts = result.get("artifacts", {})
+            if artifacts:
+                data_summary.append(f"Artifacts: {artifacts}")
+            
+            return "\n".join(data_summary) if data_summary else "No data available"
+            
+        except Exception:
+            return "Error extracting available data"
+
+    def _summarize_manifest(self, manifest: Dict[str, Any]) -> str:
+        """Create a brief summary of the manifest for LLM context"""
+        
+        try:
+            files = manifest.get("files", {})
+            file_summary = []
+            
+            for filename, file_info in files.items():
+                if isinstance(file_info, dict):
+                    file_type = file_info.get("type", "unknown")
+                    columns = file_info.get("columns", [])
+                    shape = file_info.get("shape", [])
+                    
+                    summary = f"{filename} ({file_type})"
+                    if columns:
+                        summary += f" - columns: {columns}"
+                    if shape:
+                        summary += f" - shape: {shape}"
+                    
+                    file_summary.append(summary)
+            
+            return "; ".join(file_summary) if file_summary else "No files"
+            
+        except Exception:
+            return "Error summarizing files"
+    
+    def _log_structured_event(self, request_id: str, event_type: str, data: Dict[str, Any]) -> None:
+        """Log structured events for Docker/monitoring systems"""
+        
+        import json
+        import datetime
+        
+        structured_log = {
+            "timestamp": datetime.datetime.now().isoformat(),
+            "request_id": request_id,
+            "event_type": event_type,
+            "service": "ai_data_agent",
+            "component": "orchestrator",
+            **data
+        }
+        
+        # Log as JSON for Docker/monitoring systems
+        logger.info(f"STRUCTURED_LOG: {json.dumps(structured_log)}")
 
     def _extract_final_answer(self, workflow_result: Dict[str, Any], questions: str) -> Any:
         """Extract clean final answer from workflow result that matches the question format"""

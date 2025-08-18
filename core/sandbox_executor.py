@@ -623,30 +623,33 @@ if __name__ == "__main__":
                 
                 if packages:
                     # Test import in the same environment that will execute the code
-                    test_script = """
+                    packages_repr = repr(packages)
+                    test_script = f"""
 import sys
 import json
 
-results = {}
-for package in {packages}:
+results = {{}}
+packages = {packages_repr}
+
+for package in packages:
     try:
         if package == 'beautifulsoup4':
             import bs4
             results[package] = True
         elif package == 'scikit-learn':
             import sklearn
-            results[package] = True
+            results[package] = True  
         elif package == 'Pillow':
             import PIL
             results[package] = True
         else:
-            exec(f'import {{package}}')
+            __import__(package)
             results[package] = True
     except ImportError:
         results[package] = False
 
 print(json.dumps(results))
-""".format(packages=repr(packages))
+"""
                     
                     # Use SAME environment as code execution
                     env = os.environ.copy()
