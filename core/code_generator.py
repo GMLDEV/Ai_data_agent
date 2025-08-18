@@ -30,7 +30,7 @@ class CodeGenerator:
         self.code_generation_prompt = PromptTemplate(
             input_variables=["task_description", "file_manifest", "output_format", "workflow_type"],
             template="""
-You are an expert Python programmer. Generate Python code to complete the user's task.
+You are an expert Python programmer. Generate Python code to complete the user's task EXACTLY as requested.
 
 TASK: {task_description}
 
@@ -41,31 +41,29 @@ WORKFLOW TYPE: {workflow_type}
 OUTPUT FORMAT REQUIRED: {output_format}
 
 REQUIREMENTS:
-1. Write complete, executable Python code
+1. Write complete, executable Python code that accomplishes the specific task
 2. Use these allowed libraries: pandas, numpy, json, csv, re, os, sys, io, base64, math, datetime, collections, requests, beautifulsoup4, bs4, lxml, html5lib, matplotlib, seaborn, plotly
 3. Handle file loading automatically (files will be available in current directory)
-4. Include proper error handling and comprehensive visualizations
+4. Include proper error handling
 5. Generate the exact output format requested
 6. Add comments explaining key steps
-7. Print results clearly and save visualizations
+7. Print results clearly
 
-VISUALIZATION REQUIREMENTS:
-- Always create relevant visualizations for data analysis tasks
-- Use matplotlib, seaborn, or plotly as appropriate
-- Save plots with descriptive filenames
-- Include multiple chart types when relevant (scatter, bar, line, heatmap, etc.)
-- Add proper titles, labels, and legends
-- Create summary statistics visualizations
+VISUALIZATION GUIDELINES:
+- Only create visualizations if the task specifically requests them (e.g., "plot", "chart", "graph", "visualize", "dashboard")
+- Only create visualizations if the workflow_type indicates analysis that benefits from visual representation
+- Do NOT add visualizations for simple data extraction, text processing, or web scraping tasks
+- Focus on completing the core task first, visualizations are secondary
 
 IMPORTANT RULES:
-- For CSV files: Use pandas to load and analyze, create visualizations
+- For CSV files: Use pandas to load and analyze as requested
 - Always print your final results
 - Handle missing values appropriately
-- Create interactive visualizations when possible
 - Store final results in a variable called 'final_result'
-- Save all plots to PNG files with descriptive names
+- Stay focused on the original task requirements
 
-Generate ONLY the Python code, no explanations or markdown:
+Generate ONLY the Python code that completes the requested task, no unnecessary additions:
+```
 ```
 """
         )
@@ -153,10 +151,20 @@ Generate ONLY the corrected Python code, no explanations:
     def generate_visualization_code(self, task_description: str, manifest: Dict[str, Any]) -> str:
         """
         Generate code with enhanced visualizations using OpenAI.
+        Only use this when visualizations are specifically requested.
         """
         if not self.openai_fixer:
             logger.warning("OpenAI fixer not available, using standard code generation")
-            return self.generate_code(task_description, manifest, workflow_type="visualization")
+            return self.generate_code(task_description, manifest, workflow_type="data_analysis")
+        
+        # Check if task actually requests visualizations
+        viz_keywords = ["plot", "chart", "graph", "visualize", "visualization", "dashboard", "show", "display"]
+        task_lower = task_description.lower()
+        needs_viz = any(keyword in task_lower for keyword in viz_keywords)
+        
+        if not needs_viz:
+            logger.info("Task doesn't explicitly request visualizations, using standard code generation")
+            return self.generate_code(task_description, manifest, workflow_type="data_analysis")
         
         try:
             # Prepare data description
@@ -172,7 +180,7 @@ Generate ONLY the corrected Python code, no explanations:
             
             data_description = f"Task: {task_description}\nFiles: {file_summary}"
             
-            logger.info("Generating visualization code with OpenAI...")
+            logger.info("Generating visualization code with OpenAI (task specifically requests visualizations)...")
             viz_code = self.openai_fixer.generate_visualization_code(
                 data_description=data_description,
                 data_sample=data_sample,

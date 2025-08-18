@@ -269,27 +269,32 @@ Generate the enhanced version maintaining all original functionality:
     def _get_system_prompt(self) -> str:
         """Get the system prompt for code fixing."""
         return """
-You are an expert Python developer and debugger. Your job is to fix Python code errors.
+You are an expert Python developer and debugger. Your job is to fix Python code errors while preserving the original intent and functionality.
 
 Guidelines:
 1. Analyze the error message and code carefully
 2. Identify the root cause of the issue
-3. Provide a complete, working fix
-4. Maintain all original functionality
-5. Add robust error handling
-6. Include helpful comments explaining the fix
-7. Return ONLY the corrected Python code
-8. Do not include explanations or markdown formatting
-9. Ensure the code is production-ready
-10. Add appropriate imports if missing
+3. Provide a minimal, targeted fix that resolves the error
+4. Maintain all original functionality and logic
+5. Do NOT add features that weren't in the original code
+6. Do NOT add visualizations unless the original code was specifically trying to create them
+7. Do NOT change the core purpose or scope of the code
+8. Add robust error handling only where necessary for the fix
+9. Include helpful comments explaining the fix
+10. Return ONLY the corrected Python code
+11. Ensure the code is production-ready and handles edge cases
+12. Keep the same imports and overall structure unless they're causing the error
 
 Focus on common issues like:
 - Import errors and missing packages
-- API changes and deprecated methods
+- API changes and deprecated methods  
 - Type errors and attribute errors
 - Network connectivity issues
 - File I/O problems
 - Data parsing errors
+- Syntax errors
+
+IMPORTANT: Your goal is to make the code work as originally intended, not to enhance or extend its functionality.
 """
     
     def _build_fix_prompt(
