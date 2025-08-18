@@ -155,6 +155,12 @@ class SandboxExecutor:
         
         # Create requirements.txt if needed
         self._create_requirements_file(temp_dir, code)
+        
+        # Install required packages
+        self._install_requirements(temp_dir)
+        
+        # Verify environment consistency to prevent mismatches
+        self._verify_environment_consistency(temp_dir)
     
     def _wrap_code_with_safety(self, code: str) -> str:
         """Wrap user code with safety measures and output capture."""
@@ -331,6 +337,10 @@ if __name__ == "__main__":
             env = os.environ.copy()
             env['PYTHONPATH'] = temp_dir
             env['HOME'] = temp_dir
+            
+            # Log environment details to ensure consistency
+            logger.debug(f"Execution environment: Python={sys.executable}, CWD={temp_dir}")
+            logger.debug(f"PYTHONPATH={env.get('PYTHONPATH', 'Not set')}")
             
             # Run the code
             if platform.system() == "Windows":
@@ -561,6 +571,114 @@ if __name__ == "__main__":
             requirements_path = os.path.join(temp_dir, "requirements.txt")
             with open(requirements_path, "w") as f:
                 f.write('\n'.join(requirements))
+    
+    def _install_requirements(self, temp_dir: str):
+        """Install packages from requirements.txt if it exists."""
+        requirements_path = os.path.join(temp_dir, "requirements.txt")
+        
+        if os.path.exists(requirements_path):
+            try:
+                logger.info("Installing required packages...")
+                
+                # CRITICAL: Use the same Python executable that will run the code
+                # This prevents environment mismatches between installation and execution
+                python_executable = sys.executable
+                
+                # Install packages using pip with the SAME Python interpreter
+                process = subprocess.Popen(
+                    [python_executable, "-m", "pip", "install", "-r", "requirements.txt"],
+                    cwd=temp_dir,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    # Use same environment variables as code execution
+                    env=os.environ.copy()
+                )
+                
+                stdout, stderr = process.communicate(timeout=120)  # 2 minute timeout for installs
+                
+                if process.returncode == 0:
+                    logger.info("Successfully installed packages")
+                    if stdout:
+                        logger.debug(f"Install stdout: {stdout}")
+                else:
+                    logger.warning(f"Package installation failed: {stderr}")
+                    if stdout:
+                        logger.debug(f"Install stdout: {stdout}")
+                        
+            except subprocess.TimeoutExpired:
+                logger.error("Package installation timed out")
+            except Exception as e:
+                logger.error(f"Failed to install packages: {e}")
+                
+    def _verify_environment_consistency(self, temp_dir: str):
+        """Verify that installed packages are accessible in the execution environment."""
+        requirements_path = os.path.join(temp_dir, "requirements.txt")
+        
+        if os.path.exists(requirements_path):
+            try:
+                # Read requirements
+                with open(requirements_path, 'r') as f:
+                    packages = [line.strip() for line in f.readlines() if line.strip()]
+                
+                if packages:
+                    # Test import in the same environment that will execute the code
+                    test_script = """
+import sys
+import json
+
+results = {}
+for package in {packages}:
+    try:
+        if package == 'beautifulsoup4':
+            import bs4
+            results[package] = True
+        elif package == 'scikit-learn':
+            import sklearn
+            results[package] = True
+        elif package == 'Pillow':
+            import PIL
+            results[package] = True
+        else:
+            exec(f'import {{package}}')
+            results[package] = True
+    except ImportError:
+        results[package] = False
+
+print(json.dumps(results))
+""".format(packages=repr(packages))
+                    
+                    # Use SAME environment as code execution
+                    env = os.environ.copy()
+                    env['PYTHONPATH'] = temp_dir
+                    env['HOME'] = temp_dir
+                    
+                    # Run verification with same Python executable
+                    process = subprocess.Popen(
+                        [sys.executable, "-c", test_script],
+                        cwd=temp_dir,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        env=env
+                    )
+                    
+                    stdout, stderr = process.communicate(timeout=30)
+                    
+                    if process.returncode == 0 and stdout:
+                        import json
+                        results = json.loads(stdout.strip())
+                        failed_packages = [pkg for pkg, success in results.items() if not success]
+                        
+                        if failed_packages:
+                            logger.error(f"Environment mismatch detected! Failed packages: {failed_packages}")
+                        else:
+                            logger.info("✅ Environment consistency verified - all packages accessible")
+                    else:
+                        logger.warning(f"Could not verify environment consistency: {stderr}")
+                        
+            except Exception as e:
+                logger.warning(f"Environment verification failed: {e}")
     
     def _create_sandbox_template(self) -> str:
         """Create a template for the sandbox environment."""
