@@ -51,7 +51,7 @@ OUTPUT FORMAT REQUIRED: {output_format}
 
 REQUIREMENTS:
 1. Write complete, executable Python code that accomplishes the specific task
-2. Use these allowed libraries: pandas, numpy, json, csv, re, os, sys, io, base64, math, datetime, collections, requests, beautifulsoup4, bs4, lxml, html5lib, matplotlib, seaborn, plotly
+2. Use these allowed libraries: pandas, numpy, json, csv, re, os, sys, io, base64, math, datetime, collections, requests, beautifulsoup4, bs4, lxml, html5lib, matplotlib, seaborn, plotly, networkx, scipy, scikit-learn, sklearn, statsmodels, sqlite3, folium, yfinance, tweepy, praw, openpyxl, xlrd, xlsxwriter
 3. Handle file loading automatically (files will be available in current directory)
 4. Include proper error handling
 5. Generate the exact output format requested

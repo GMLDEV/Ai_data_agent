@@ -490,16 +490,54 @@ if __name__ == "__main__":
         
         # Map import names to package names
         package_mapping = {
+            # Core data science libraries
             'pandas': 'pandas',
             'numpy': 'numpy', 
+            'scipy': 'scipy',
+            'statsmodels': 'statsmodels',
+            'sklearn': 'scikit-learn',
+            'scikit-learn': 'scikit-learn',
+            
+            # Visualization libraries
             'matplotlib': 'matplotlib',
             'seaborn': 'seaborn',
+            'plotly': 'plotly',
+            'folium': 'folium',
+            
+            # Web scraping and HTTP
             'requests': 'requests',
             'bs4': 'beautifulsoup4',
             'beautifulsoup4': 'beautifulsoup4',
+            'lxml': 'lxml',
+            'html5lib': 'html5lib',
+            
+            # Image processing
             'PIL': 'Pillow',
             'cv2': 'opencv-python',
-            'scipy': 'scipy'
+            'skimage': 'scikit-image',
+            
+            # Network analysis
+            'networkx': 'networkx',
+            
+            # Specialized data tools
+            'yfinance': 'yfinance',
+            'tweepy': 'tweepy',
+            'praw': 'praw',
+            
+            # Excel and file handling
+            'openpyxl': 'openpyxl',
+            'xlrd': 'xlrd',
+            'xlsxwriter': 'xlsxwriter',
+            
+            # Web frameworks and APIs
+            'dash': 'dash',
+            'streamlit': 'streamlit',
+            'flask': 'flask',
+            'fastapi': 'fastapi',
+            
+            # Database
+            'sqlalchemy': 'sqlalchemy',
+            'psycopg2': 'psycopg2-binary'
         }
         
         # Extract imports from code
