@@ -8,8 +8,17 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 class WorkflowClassifier:
-    def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or settings.openai_api_key
+    def __init__(self, llm_client=None):
+        # If an LLMClient object is passed, extract the API key
+        if hasattr(llm_client, 'api_key'):
+            self.api_key = llm_client.api_key
+        elif isinstance(llm_client, str):
+            # If a string is passed, treat it as the API key
+            self.api_key = llm_client
+        else:
+            # Fallback to settings
+            self.api_key = settings.openai_api_key
+            
         if not self.api_key:
             raise ValueError("OpenAI API key is required")
         
