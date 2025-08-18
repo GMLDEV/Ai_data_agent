@@ -276,6 +276,19 @@ class Orchestrator:
     def _extract_final_answer_with_fallback(self, workflow_result: Dict[str, Any], questions: str, manifest: Dict[str, Any], request_id: str) -> tuple[Any, float]:
         """Extract final answer with format compliance scoring and fallback generation"""
         
+        # Add debugging for workflow result
+        logger.debug(f"🔍 [ID: {request_id}] Raw workflow result: {workflow_result}")
+        logger.debug(f"🔍 [ID: {request_id}] Workflow success flag: {workflow_result.get('success')}")
+        logger.debug(f"🔍 [ID: {request_id}] Workflow result type: {type(workflow_result)}")
+        if 'result' in workflow_result:
+            logger.debug(f"🔍 [ID: {request_id}] Inner result: {workflow_result.get('result')}")
+            if isinstance(workflow_result['result'], dict):
+                inner = workflow_result['result']
+                logger.debug(f"🔍 [ID: {request_id}] Inner result success: {inner.get('success')}")
+                logger.debug(f"🔍 [ID: {request_id}] Inner result output type: {type(inner.get('output'))}")
+                if inner.get('output'):
+                    logger.debug(f"🔍 [ID: {request_id}] Inner result output preview: {repr(str(inner.get('output'))[:200])}")
+        
         # Step 1: Try normal extraction
         try:
             primary_answer = self._extract_final_answer(workflow_result, questions)

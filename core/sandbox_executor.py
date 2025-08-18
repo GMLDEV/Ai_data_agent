@@ -428,17 +428,37 @@ if __name__ == "__main__":
                 with open(error_file, "r") as f:
                     error_details = json.load(f)
             
+            # Add debugging output
+            logger.debug(f"🔍 DEBUGGING SANDBOX OUTPUT:")
+            logger.debug(f"🔍 Success file exists: {os.path.exists(success_file)}")
+            logger.debug(f"🔍 Success value: {success}")
+            logger.debug(f"🔍 Return code: {return_code}")
+            logger.debug(f"🔍 Raw captured_stdout: {repr(captured_stdout)}")
+            logger.debug(f"🔍 Raw captured_stderr: {repr(captured_stderr)}")
+            if error_details:
+                logger.debug(f"🔍 Error details: {error_details}")
+            
             # Determine final output
             output = captured_stdout.strip() if captured_stdout.strip() else None
             
             # Try to parse JSON output
             if output:
                 try:
-                    output = json.loads(output)
-                except json.JSONDecodeError:
+                    parsed_output = json.loads(output)
+                    logger.debug(f"🔍 JSON parsing successful: {type(parsed_output)}")
+                    logger.debug(f"🔍 Parsed JSON keys: {list(parsed_output.keys()) if isinstance(parsed_output, dict) else 'Not a dict'}")
+                    output = parsed_output
+                except json.JSONDecodeError as json_err:
+                    logger.debug(f"🔍 JSON parsing failed: {json_err}")
+                    logger.debug(f"🔍 Keeping output as string")
                     pass  # Keep as string
+            else:
+                logger.debug(f"🔍 No output to parse")
             
-            return {
+            logger.debug(f"🔍 Final processed output: {repr(output)}")
+            logger.debug(f"🔍 Final output type: {type(output)}")
+            
+            final_result = {
                 "success": success and return_code == 0,
                 "error": error_details["error"] if error_details else None,
                 "output": output,
@@ -446,6 +466,10 @@ if __name__ == "__main__":
                 "stderr": captured_stderr,
                 "return_code": return_code
             }
+            
+            logger.debug(f"🔍 Final sandbox result: success={final_result['success']}, has_output={bool(final_result['output'])}")
+            
+            return final_result
             
         except Exception as e:
             return {
