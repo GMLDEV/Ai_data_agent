@@ -400,7 +400,7 @@ RESPONSE FORMAT: Return only the Python code, nothing else.
         # Create the main execution script
         main_script = self._wrap_code_with_safety(code)
         
-        with open(os.path.join(temp_dir, "main.py"), "w") as f:
+        with open(os.path.join(temp_dir, "main.py"), "w", encoding="utf-8") as f:
             f.write(main_script)
         
         # Create requirements.txt if needed
@@ -533,13 +533,13 @@ def main():
             signal.alarm(0)
 
         # Write results to files
-        with open("stdout.txt", "w") as f:
+        with open("stdout.txt", "w", encoding="utf-8", errors="replace") as f:
             f.write(stdout_content)
 
-        with open("stderr.txt", "w") as f:
+        with open("stderr.txt", "w", encoding="utf-8", errors="replace") as f:
             f.write(stderr_content)
 
-        with open("success.txt", "w") as f:
+        with open("success.txt", "w", encoding="utf-8") as f:
             f.write("true")
 
         # Print final stdout for capture
@@ -552,10 +552,10 @@ def main():
             "traceback": traceback.format_exc()
         }}
 
-        with open("error.json", "w") as f:
-            json.dump(error_info, f, indent=2)
+        with open("error.json", "w", encoding="utf-8", errors="replace") as f:
+            json.dump(error_info, f, indent=2, ensure_ascii=False)
 
-        with open("success.txt", "w") as f:
+        with open("success.txt", "w", encoding="utf-8") as f:
             f.write("false")
 
         print(f"ERROR: {{str(e)}}", file=sys.stderr)
@@ -679,7 +679,7 @@ if __name__ == "__main__":
             success = False
             
             if os.path.exists(success_file):
-                with open(success_file, "r") as f:
+                with open(success_file, "r", encoding="utf-8", errors="replace") as f:
                     success = f.read().strip() == "true"
             
             # Read captured output files
@@ -692,15 +692,15 @@ if __name__ == "__main__":
             error_details = None
             
             if os.path.exists(stdout_file):
-                with open(stdout_file, "r") as f:
+                with open(stdout_file, "r", encoding="utf-8", errors="replace") as f:
                     captured_stdout = f.read()
             
             if os.path.exists(stderr_file):
-                with open(stderr_file, "r") as f:
+                with open(stderr_file, "r", encoding="utf-8", errors="replace") as f:
                     captured_stderr = f.read()
             
             if os.path.exists(error_file):
-                with open(error_file, "r") as f:
+                with open(error_file, "r", encoding="utf-8", errors="replace") as f:
                     error_details = json.load(f)
             
             # Determine final output
