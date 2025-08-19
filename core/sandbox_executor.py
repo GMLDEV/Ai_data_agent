@@ -190,8 +190,90 @@ class SandboxExecutor:
         # Verify environment consistency to prevent mismatches
         self._verify_environment_consistency(temp_dir)
     
+    def _auto_fix_imports(self, code: str) -> str:
+        """Automatically add missing import statements that AI commonly forgets."""
+        
+        lines = code.split('\n')
+        imports_to_add = []
+        
+        # Check if code uses certain modules without importing them
+        common_modules = {
+            'io': ['io.', 'StringIO', 'BytesIO'],
+            'base64': ['base64.', 'b64encode', 'b64decode'],
+            'os': ['os.path', 'os.environ', 'os.getcwd'],
+            'sys': ['sys.path', 'sys.argv', 'sys.exit'],
+            'json': ['json.dumps', 'json.loads', 'json.load'],
+            'tempfile': ['tempfile.', 'NamedTemporaryFile'],
+            'warnings': ['warnings.filterwarnings'],
+            'matplotlib.pyplot': ['plt.', 'pyplot.'],
+            'pandas': ['pd.', 'DataFrame', 'Series'],
+            'numpy': ['np.', 'array(', 'zeros(', 'ones('],
+            'networkx': ['nx.', 'Graph(', 'DiGraph('],
+        }
+        
+        # Check which imports are already present
+        existing_imports = set()
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith('import ') or stripped.startswith('from '):
+                # Extract module name from import statement
+                if ' import ' in stripped:
+                    if stripped.startswith('from '):
+                        module = stripped.split(' import ')[0].replace('from ', '').strip()
+                    else:
+                        module = stripped.replace('import ', '').split(' as ')[0].split(',')[0].strip()
+                    existing_imports.add(module)
+        
+        # Check which modules are used but not imported
+        code_content = '\n'.join(lines)
+        for module, usage_patterns in common_modules.items():
+            if module not in existing_imports:
+                # Check if any usage pattern is found in the code
+                for pattern in usage_patterns:
+                    if pattern in code_content:
+                        imports_to_add.append(module)
+                        break
+        
+        # Add missing imports at the top (after existing imports)
+        if imports_to_add:
+            logger.info(f"🔧 Auto-fixing missing imports: {imports_to_add}")
+            
+            # Find where to insert imports (after existing imports or at the top)
+            insert_index = 0
+            for i, line in enumerate(lines):
+                stripped = line.strip()
+                if (stripped.startswith('import ') or 
+                    stripped.startswith('from ') or 
+                    stripped.startswith('#') or 
+                    stripped == ''):
+                    insert_index = i + 1
+                else:
+                    break
+            
+            # Add the missing imports
+            import_lines = []
+            for module in imports_to_add:
+                if module == 'matplotlib.pyplot':
+                    import_lines.append('import matplotlib.pyplot as plt')
+                elif module == 'pandas':
+                    import_lines.append('import pandas as pd')
+                elif module == 'numpy':
+                    import_lines.append('import numpy as np')
+                elif module == 'networkx':
+                    import_lines.append('import networkx as nx')
+                else:
+                    import_lines.append(f'import {module}')
+            
+            # Insert the imports
+            lines = lines[:insert_index] + import_lines + [''] + lines[insert_index:]
+        
+        return '\n'.join(lines)
+    
     def _wrap_code_with_safety(self, code: str) -> str:
         """Wrap user code with safety measures and output capture."""
+        
+        # Auto-fix common import issues
+        code = self._auto_fix_imports(code)
         
         # Auto-convert json.dumps calls to use safe encoder
         safe_code = code.replace('json.dumps(', 'safe_json_dumps(')
@@ -203,6 +285,9 @@ import traceback
 import signal
 import os
 import platform
+import io
+import base64
+import tempfile
 from contextlib import redirect_stdout, redirect_stderr
 from io import StringIO
 
@@ -302,8 +387,53 @@ def main():
 
         # Redirect output
         with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
-            # User code starts here (with safe JSON handling)
-            exec('''{safe_code}''')
+            # Auto-import commonly used libraries that AI might forget
+            try:
+                import pandas as pd
+                import numpy as np
+                import matplotlib.pyplot as plt
+                import seaborn as sns
+                import networkx as nx
+                import scipy
+                from scipy import stats
+                import sklearn
+                import plotly.graph_objects as go
+                import plotly.express as px
+                import warnings
+                warnings.filterwarnings('ignore')
+                
+                # Make these available in the execution context
+                exec_globals = {{}}
+                exec_globals.update({{
+                    'pd': pd, 'pandas': pd,
+                    'np': np, 'numpy': np,
+                    'plt': plt, 'matplotlib': __import__('matplotlib'),
+                    'sns': sns, 'seaborn': sns,
+                    'nx': nx, 'networkx': nx,
+                    'scipy': scipy, 'stats': stats,
+                    'sklearn': sklearn,
+                    'go': go, 'px': px,
+                    'io': io, 'base64': base64,
+                    'os': os, 'sys': sys,
+                    'json': json, 'tempfile': tempfile,
+                    'safe_json_dumps': safe_json_dumps,
+                    '__builtins__': __builtins__
+                }})
+                
+            except ImportError as import_err:
+                print(f"Warning: Could not auto-import some libraries: {{import_err}}", file=sys.stderr)
+                # Fallback to basic imports
+                exec_globals = {{}}
+                exec_globals.update({{
+                    'io': io, 'base64': base64,
+                    'os': os, 'sys': sys,
+                    'json': json, 'tempfile': tempfile,
+                    'safe_json_dumps': safe_json_dumps,
+                    '__builtins__': __builtins__
+                }})
+            
+            # User code starts here (with safe JSON handling and auto-imports)
+            exec('''{safe_code}''', exec_globals)
 
         # Get captured output
         stdout_content = stdout_capture.getvalue()
