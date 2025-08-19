@@ -229,37 +229,66 @@ async def api_endpoint(request: Request):
             }
         )
 
-# Legacy endpoint for backwards compatibility
+# Main endpoint for evaluators using curl with -F flag
 @app.post("/process-request")
-async def process_request(
-    questions_txt: UploadFile = File(..., alias="questions.txt"),
-    files: Optional[List[UploadFile]] = File(None)
-):
-    """Legacy endpoint - redirects to main API endpoint"""
+async def process_request(request: Request):
+    """
+    Main endpoint for evaluators using curl with -F flag.
+    Accepts POST requests with multipart form data:
+    - questions.txt (required): Contains the questions
+    - Additional files (optional): CSV, images, etc.
+    
+    Example: curl "https://app.example.com/process-request" -F "questions.txt=@question.txt" -F "data.csv=@data.csv"
+    """
     import traceback
+    
     try:
-        # Read questions from questions.txt file
-        questions_content = await questions_txt.read()
-        questions = questions_content.decode('utf-8')
-
+        logger.info("📥 Received process-request from evaluator")
+        
+        # Get the form data
+        form = await request.form()
+        logger.info(f"📋 Form fields received: {list(form.keys())}")
+        
+        # Extract questions from questions.txt field
+        questions_file = form.get("questions.txt")
+        if not questions_file:
+            logger.error("❌ questions.txt not found in form data")
+            return JSONResponse(
+                status_code=400,
+                content={"error": "questions.txt is required in form data"}
+            )
+        
+        # Read questions content
+        questions_content = await questions_file.read()
+        questions = questions_content.decode('utf-8').strip()
+        logger.info(f"📝 Questions received: {questions[:200]}...")
+        
         # Process additional files
         file_dict = {}
-        if files:
-            for file in files:
-                # Skip questions.txt if it appears in the files list
-                if file.filename == "questions.txt":
-                    continue
-                content = await file.read()
-                file_dict[file.filename] = content
-
-        # Process request with LLM orchestrator
+        for field_name, file_data in form.items():
+            if field_name == "questions.txt":
+                continue  # Skip questions.txt, already processed
+            
+            if hasattr(file_data, 'read'):  # It's a file
+                content = await file_data.read()
+                # Use the original filename if available, otherwise use field name
+                filename = getattr(file_data, 'filename', field_name)
+                file_dict[filename] = content
+                logger.info(f"📁 File received: {filename} ({len(content)} bytes)")
+        
+        logger.info(f"🗂️ Total files for processing: {len(file_dict)}")
+        
+        # Process request with orchestrator
+        logger.info("🔄 Starting request processing with orchestrator")
         result = orchestrator.process_request(questions, file_dict)
-
+        
+        logger.info("✅ Request processing completed successfully")
         return JSONResponse(content=result)
 
     except Exception as e:
         tb = traceback.format_exc()
-        logger.error(f"Request processing failed: {str(e)}\n{tb}")
+        logger.error(f"❌ Request processing failed: {str(e)}\n{tb}")
+        
         # Try to include workflow and manifest info if possible
         workflow = None
         manifest_type = None
@@ -268,13 +297,14 @@ async def process_request(
             manifest_type = type(getattr(orchestrator, 'last_manifest', None)).__name__
         except Exception:
             pass
+            
         return JSONResponse(
             status_code=500,
             content={
                 "success": False,
                 "error_type": type(e).__name__,
                 "error_message": str(e),
-                "traceback": tb,
+                "traceback": tb if os.getenv('DEBUG') else None,
                 "workflow": str(workflow),
                 "manifest_type": str(manifest_type)
             }
