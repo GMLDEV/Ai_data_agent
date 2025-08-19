@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional, Dict, Any
@@ -161,12 +161,81 @@ async def execute_code(code: str = Form(...)):
 
 # Add this new endpoint to main.py after the existing endpoints
 
+# Main API endpoint for evaluation team
+@app.post("/api/")
+async def api_endpoint(request: Request):
+    """
+    Main API endpoint for evaluation team.
+    Accepts POST requests with multipart form data:
+    - questions.txt (required): Contains the questions
+    - Additional files (optional): CSV, images, etc.
+    """
+    import traceback
+    from fastapi import Request
+    
+    try:
+        logger.info("📥 Received API request from evaluation team")
+        
+        # Get the form data
+        form = await request.form()
+        logger.info(f"📋 Form fields received: {list(form.keys())}")
+        
+        # Extract questions from questions.txt
+        questions_file = form.get("questions.txt")
+        if not questions_file:
+            logger.error("❌ questions.txt not found in request")
+            return JSONResponse(
+                status_code=400,
+                content={"error": "questions.txt is required"}
+            )
+        
+        # Read questions content
+        questions_content = await questions_file.read()
+        questions = questions_content.decode('utf-8').strip()
+        logger.info(f"📝 Questions received: {questions[:200]}...")
+        
+        # Process additional files
+        file_dict = {}
+        for field_name, file_data in form.items():
+            if field_name == "questions.txt":
+                continue  # Skip questions.txt, already processed
+            
+            if hasattr(file_data, 'read'):  # It's a file
+                content = await file_data.read()
+                file_dict[field_name] = content
+                logger.info(f"📁 File received: {field_name} ({len(content)} bytes)")
+        
+        logger.info(f"🗂️ Total files for processing: {len(file_dict)}")
+        
+        # Process request with orchestrator
+        logger.info("🔄 Starting request processing with orchestrator")
+        result = orchestrator.process_request(questions, file_dict)
+        
+        logger.info("✅ Request processing completed successfully")
+        return JSONResponse(content=result)
+
+    except Exception as e:
+        tb = traceback.format_exc()
+        logger.error(f"❌ API request processing failed: {str(e)}\n{tb}")
+        
+        # Return detailed error for debugging
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+                "traceback": tb if os.getenv('DEBUG') else None
+            }
+        )
+
+# Legacy endpoint for backwards compatibility
 @app.post("/process-request")
 async def process_request(
     questions_txt: UploadFile = File(..., alias="questions.txt"),
     files: Optional[List[UploadFile]] = File(None)
 ):
-    """Main LLM-powered request processing endpoint"""
+    """Legacy endpoint - redirects to main API endpoint"""
     import traceback
     try:
         # Read questions from questions.txt file
