@@ -177,6 +177,9 @@ class DataAnalysisWorkflow(BaseWorkflow):
                 allowed_libraries=['pandas', 'numpy', 'matplotlib', 'seaborn', 'plotly', 'scipy', 'sklearn']
             )
             
+            # Clean any base64 image strings in the result
+            result = self._process_base64_images_in_result(result)
+            
             # Enhanced result processing
             enhanced_result = {
                 "success": result.get("success", False),
@@ -379,6 +382,52 @@ class DataAnalysisWorkflow(BaseWorkflow):
         except Exception as e:
             logger.warning(f"Could not analyze data cleaning needs for {csv_file}: {e}")
         return steps
+
+    def _clean_base64_string(self, base64_string: str) -> str:
+        """
+        Remove data URL prefix from base64 string if present.
+        
+        Args:
+            base64_string: Base64 string that may contain data URL prefix
+            
+        Returns:
+            Clean base64 string without prefix
+        """
+        if base64_string.startswith('data:image/'):
+            # Find the comma that separates the prefix from the actual base64 data
+            comma_index = base64_string.find(',')
+            if comma_index != -1:
+                return base64_string[comma_index + 1:]
+        return base64_string
+
+    def _process_base64_images_in_result(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Process the result to clean any base64 image strings.
+        
+        Args:
+            result: The execution result that may contain base64 images
+            
+        Returns:
+            Result with cleaned base64 strings
+        """
+        def clean_base64_in_dict(obj):
+            if isinstance(obj, dict):
+                cleaned_obj = {}
+                for key, value in obj.items():
+                    if isinstance(value, str) and ('base64' in key.lower() or 'chart' in key.lower() or 'image' in key.lower()):
+                        # This looks like a base64 image field
+                        cleaned_obj[key] = self._clean_base64_string(value)
+                    elif isinstance(value, (dict, list)):
+                        cleaned_obj[key] = clean_base64_in_dict(value)
+                    else:
+                        cleaned_obj[key] = value
+                return cleaned_obj
+            elif isinstance(obj, list):
+                return [clean_base64_in_dict(item) for item in obj]
+            else:
+                return obj
+        
+        return clean_base64_in_dict(result)
 
     def _build_data_analysis_prompt(self, questions: List[str], file_manifest: Dict[str, Any], plan: Dict[str, Any]) -> str:
         # Build a prompt for LLM code generation
