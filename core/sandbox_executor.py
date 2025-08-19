@@ -18,6 +18,34 @@ import platform
 
 logger = logging.getLogger(__name__)
 
+class NumpyJSONEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles NumPy and pandas data types"""
+    def default(self, obj):
+        # Handle NumPy types
+        if hasattr(obj, 'dtype'):  # NumPy arrays and scalars
+            if hasattr(obj, 'tolist'):
+                return obj.tolist()
+            elif hasattr(obj, 'item'):
+                return obj.item()
+        
+        # Handle pandas types
+        if hasattr(obj, 'to_dict'):  # DataFrames, Series
+            return obj.to_dict()
+        elif hasattr(obj, 'item'):  # pandas scalars
+            return obj.item()
+            
+        # Handle other common types
+        if str(type(obj)).startswith('<class \'numpy.'):
+            # Fallback for any numpy type we missed
+            if hasattr(obj, 'tolist'):
+                return obj.tolist()
+            elif hasattr(obj, 'item'):
+                return obj.item()
+            else:
+                return str(obj)
+                
+        return super().default(obj)
+
 class SandboxExecutor:
     """
     Secure sandbox executor for running Python code with resource limits
@@ -165,6 +193,9 @@ class SandboxExecutor:
     def _wrap_code_with_safety(self, code: str) -> str:
         """Wrap user code with safety measures and output capture."""
         
+        # Auto-convert json.dumps calls to use safe encoder
+        safe_code = code.replace('json.dumps(', 'safe_json_dumps(')
+        
         wrapped_code = f"""
 import sys
 import json
@@ -180,6 +211,39 @@ try:
     import resource
 except ImportError:
     resource = None
+
+# Custom JSON encoder for NumPy/pandas compatibility
+class SafeJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        # Handle NumPy types
+        if hasattr(obj, 'dtype'):  # NumPy arrays and scalars
+            if hasattr(obj, 'tolist'):
+                return obj.tolist()
+            elif hasattr(obj, 'item'):
+                return obj.item()
+        
+        # Handle pandas types
+        if hasattr(obj, 'to_dict'):  # DataFrames, Series
+            return obj.to_dict()
+        elif hasattr(obj, 'item'):  # pandas scalars
+            return obj.item()
+            
+        # Handle other common types
+        if str(type(obj)).startswith('<class \\'numpy.'):
+            # Fallback for any numpy type we missed
+            if hasattr(obj, 'tolist'):
+                return obj.tolist()
+            elif hasattr(obj, 'item'):
+                return obj.item()
+            else:
+                return str(obj)
+                
+        return super().default(obj)
+
+# Helper function for safe JSON serialization
+def safe_json_dumps(obj, **kwargs):
+    \"\"\"JSON dumps that handles NumPy/pandas types automatically\"\"\"
+    return json.dumps(obj, cls=SafeJSONEncoder, **kwargs)
 
 # Set resource limits
 def set_limits():
@@ -238,8 +302,8 @@ def main():
 
         # Redirect output
         with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
-            # User code starts here
-            exec('''{code}''')
+            # User code starts here (with safe JSON handling)
+            exec('''{safe_code}''')
 
         # Get captured output
         stdout_content = stdout_capture.getvalue()
@@ -753,9 +817,44 @@ print(json.dumps(results))
 
 import sys
 import os
+import json
+import numpy as np
 
 # Restrict certain dangerous operations
 import builtins
+
+# Custom JSON encoder for NumPy/pandas compatibility
+class SafeJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        # Handle NumPy types
+        if hasattr(obj, 'dtype'):  # NumPy arrays and scalars
+            if hasattr(obj, 'tolist'):
+                return obj.tolist()
+            elif hasattr(obj, 'item'):
+                return obj.item()
+        
+        # Handle pandas types
+        if hasattr(obj, 'to_dict'):  # DataFrames, Series
+            return obj.to_dict()
+        elif hasattr(obj, 'item'):  # pandas scalars
+            return obj.item()
+            
+        # Handle other common types
+        if str(type(obj)).startswith('<class \\'numpy.'):
+            # Fallback for any numpy type we missed
+            if hasattr(obj, 'tolist'):
+                return obj.tolist()
+            elif hasattr(obj, 'item'):
+                return obj.item()
+            else:
+                return str(obj)
+                
+        return super().default(obj)
+
+# Helper function for safe JSON serialization
+def safe_json_dumps(obj, **kwargs):
+    \"\"\"JSON dumps that handles NumPy/pandas types automatically\"\"\"
+    return json.dumps(obj, cls=SafeJSONEncoder, **kwargs)
 
 # Override dangerous built-ins
 original_open = builtins.open
@@ -773,7 +872,10 @@ def safe_open(file, mode='r', **kwargs):
 # Replace built-ins
 builtins.open = safe_open
 
-print("Sandbox environment initialized")
+# Make safe_json_dumps available globally
+builtins.safe_json_dumps = safe_json_dumps
+
+print("Sandbox environment initialized with JSON compatibility")
 """
         return template
 

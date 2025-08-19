@@ -57,6 +57,7 @@ REQUIREMENTS:
 5. Generate the exact output format requested
 6. Add comments explaining key steps
 7. Print results clearly
+8. **CRITICAL JSON SERIALIZATION**: When using pandas/numpy, convert data types to native Python types before JSON serialization using .item() for scalars and .tolist() for arrays
 
 VISUALIZATION GUIDELINES:
 - Only create visualizations if the task specifically requests them (e.g., "plot", "chart", "graph", "visualize", "dashboard")
