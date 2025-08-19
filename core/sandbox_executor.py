@@ -18,6 +18,14 @@ import platform
 
 logger = logging.getLogger(__name__)
 
+# Try to import OpenAI code fixer for intelligent retry
+try:
+    from core.openai_code_fixer import OpenAICodeFixer
+    OPENAI_FIXER_AVAILABLE = True
+except ImportError:
+    logger.warning("OpenAI code fixer not available - intelligent retry disabled")
+    OPENAI_FIXER_AVAILABLE = False
+
 class NumpyJSONEncoder(json.JSONEncoder):
     """Custom JSON encoder that handles NumPy and pandas data types"""
     def default(self, obj):
@@ -69,6 +77,15 @@ class SandboxExecutor:
         # Remove import restrictions
         self.allowed_imports = None
         
+        # Initialize OpenAI code fixer for intelligent retry
+        self.openai_fixer = None
+        if OPENAI_FIXER_AVAILABLE:
+            try:
+                self.openai_fixer = OpenAICodeFixer()
+                logger.info("✅ OpenAI code fixer initialized - intelligent retry enabled")
+            except Exception as e:
+                logger.warning(f"Failed to initialize OpenAI code fixer: {e}")
+        
         # Create base sandbox template
         self.sandbox_template = self._create_sandbox_template()
         
@@ -76,18 +93,20 @@ class SandboxExecutor:
                     code: str, 
                     files: Dict[str, Any], 
                     timeout: int = 180,
-                    allowed_libraries: Optional[List[str]] = None) -> Dict[str, Any]:
+                    allowed_libraries: Optional[List[str]] = None,
+                    max_retries: int = 3) -> Dict[str, Any]:
         """
-        Execute Python code in a sandboxed environment.
+        Execute Python code in a sandboxed environment with intelligent retry.
         
         Args:
             code: Python code to execute
             files: Dictionary of files to make available
             timeout: Execution timeout in seconds
             allowed_libraries: Additional allowed libraries for this execution
+            max_retries: Maximum number of retry attempts
             
         Returns:
-            Dict with execution results
+            Dict with execution results including retry information
         """
         
         # Validate and normalize parameters
@@ -103,45 +122,102 @@ class SandboxExecutor:
             else:
                 files = {}
         
-        # Create temporary directory for execution
-        with tempfile.TemporaryDirectory() as temp_dir:
+        original_code = code
+        retry_count = 0
+        
+        # Try execution with intelligent retry
+        for attempt in range(max_retries + 1):
             try:
-                # Setup sandbox environment
-                self._setup_sandbox_environment(temp_dir, files, code)
-                
-                # No import validation - allow all imports
-                
-                # Execute code
-                result = self._run_code_in_sandbox(temp_dir, timeout)
-                
-                # Collect artifacts (plots, files generated)
-                artifacts = self._collect_artifacts(temp_dir)
-                result["artifacts"] = artifacts
-                
-                return result
-                
+                # Create temporary directory for execution
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    # Setup sandbox environment
+                    self._setup_sandbox_environment(temp_dir, files, code)
+                    
+                    # Execute code
+                    result = self._run_code_in_sandbox(temp_dir, timeout)
+                    
+                    # Collect artifacts (plots, files generated)
+                    artifacts = self._collect_artifacts(temp_dir)
+                    result["artifacts"] = artifacts
+                    
+                    # If successful, add retry information and return
+                    if result.get("success", False):
+                        result["retry_count"] = retry_count
+                        result["original_code"] = original_code
+                        result["final_code"] = code
+                        if retry_count > 0:
+                            result["was_fixed_by_llm"] = True
+                            logger.info(f"✅ Code execution successful after {retry_count} retries")
+                        return result
+                    
+                    # If failed and we have retries left, try to fix the code
+                    if attempt < max_retries and self.openai_fixer:
+                        logger.info(f"🔄 Attempt {attempt + 1} failed, trying to fix code with OpenAI...")
+                        
+                        error_info = result.get("error_details", {})
+                        error_message = error_info.get("error", "Unknown error")
+                        stderr_content = result.get("stderr", "")
+                        
+                        # Use OpenAI to fix the code
+                        fixed_code, fix_metadata = self.openai_fixer.fix_code_error(
+                            code=code,
+                            error_message=error_message,
+                            stderr=stderr_content,
+                            attempt_number=attempt + 1,
+                            context={"files": list(files.keys())}
+                        )
+                        
+                        if fixed_code:
+                            logger.info(f"🔧 OpenAI suggested a fix (attempt {attempt + 1})")
+                            code = fixed_code
+                            retry_count += 1
+                            continue
+                        else:
+                            logger.warning(f"❌ OpenAI could not suggest a fix for attempt {attempt + 1}")
+                    
+                    # If no more retries or no fixer available, return the last result
+                    if attempt == max_retries:
+                        result["retry_count"] = retry_count
+                        result["original_code"] = original_code
+                        result["final_code"] = code
+                        result["max_retries_reached"] = True
+                        logger.error(f"❌ Code execution failed after {max_retries} retry attempts")
+                        return result
+                        
             except Exception as e:
-                logger.error(f"Sandbox execution failed: {e}")
-                logger.error(f"Exception type: {type(e)}")
-                import traceback
-                logger.error(traceback.format_exc())
-                logger.error(f"Type of files: {type(files)}, value: {files}")
-                logger.error(f"Type of allowed_libraries: {type(allowed_libraries)}, value: {allowed_libraries}")
-                logger.error(f"Code to execute:\n{code}")
-                return {
-                    "success": False,
-                    "error": str(e),
-                    "traceback": traceback.format_exc(),
-                    "code": code,
-                    "files_type": str(type(files)),
-                    "files_value": str(files),
-                    "allowed_libraries_type": str(type(allowed_libraries)),
-                    "allowed_libraries_value": str(allowed_libraries),
-                    "output": None,
-                    "stdout": "",
-                    "stderr": str(e),
-                    "artifacts": {}
-                }
+                logger.error(f"Sandbox execution failed on attempt {attempt + 1}: {e}")
+                if attempt == max_retries:
+                    # Final attempt failed with exception
+                    import traceback
+                    return {
+                        "success": False,
+                        "error": str(e),
+                        "traceback": traceback.format_exc(),
+                        "code": code,
+                        "retry_count": retry_count,
+                        "original_code": original_code,
+                        "final_code": code,
+                        "max_retries_reached": True,
+                        "output": None,
+                        "stdout": "",
+                        "stderr": str(e),
+                        "artifacts": {}
+                    }
+                # For non-final attempts, log and continue to retry
+                continue
+        
+        # This should not be reached, but return error if it does
+        return {
+            "success": False,
+            "error": "Unexpected error in retry loop",
+            "retry_count": retry_count,
+            "original_code": original_code,
+            "final_code": code,
+            "output": None,
+            "stdout": "",
+            "stderr": "Unexpected error in retry loop",
+            "artifacts": {}
+        }
     
     def execute_simple(self, code: str) -> Dict[str, Any]:
         """
@@ -191,7 +267,10 @@ class SandboxExecutor:
         self._verify_environment_consistency(temp_dir)
     
     def _auto_fix_imports(self, code: str) -> str:
-        """Automatically add missing import statements that AI commonly forgets."""
+        """Automatically add missing import statements and fix deprecated code patterns that AI commonly uses."""
+        
+        # First fix deprecated patterns
+        code = self._fix_deprecated_patterns(code)
         
         lines = code.split('\n')
         imports_to_add = []
@@ -268,6 +347,76 @@ class SandboxExecutor:
             lines = lines[:insert_index] + import_lines + [''] + lines[insert_index:]
         
         return '\n'.join(lines)
+    
+    def _fix_deprecated_patterns(self, code: str) -> str:
+        """Fix deprecated pandas and other library patterns that AI commonly generates."""
+        
+        logger.info("🔧 Checking for deprecated patterns in generated code")
+        
+        fixes_applied = []
+        
+        # Fix pandas DataFrame.append() -> pd.concat()
+        if '.append(' in code:
+            # Pattern: df = df.append(other_df) -> df = pd.concat([df, other_df], ignore_index=True)
+            import re
+            
+            # Match df.append(something) patterns
+            append_pattern = r'(\w+)\s*=\s*(\w+)\.append\((.*?)\)'
+            matches = re.findall(append_pattern, code)
+            
+            for match in matches:
+                var_name, df_name, append_arg = match
+                old_pattern = f'{var_name} = {df_name}.append({append_arg})'
+                new_pattern = f'{var_name} = pd.concat([{df_name}, {append_arg}], ignore_index=True)'
+                code = code.replace(old_pattern, new_pattern)
+                fixes_applied.append(f"DataFrame.append() -> pd.concat()")
+        
+        # Fix Series.append() -> pd.concat() 
+        if 'Series' in code and '.append(' in code:
+            import re
+            series_append_pattern = r'(\w+)\s*=\s*(\w+)\.append\((.*?)\)'
+            matches = re.findall(series_append_pattern, code)
+            
+            for match in matches:
+                var_name, series_name, append_arg = match
+                old_pattern = f'{var_name} = {series_name}.append({append_arg})'
+                new_pattern = f'{var_name} = pd.concat([{series_name}, {append_arg}], ignore_index=True)'
+                code = code.replace(old_pattern, new_pattern)
+                fixes_applied.append(f"Series.append() -> pd.concat()")
+        
+        # Fix matplotlib.pyplot.show() -> plt.savefig() for headless environments
+        if 'plt.show()' in code:
+            code = code.replace('plt.show()', '# plt.show() # Commented out for headless environment')
+            fixes_applied.append("plt.show() -> commented out")
+        
+        # Fix deprecated numpy random functions
+        if 'np.random.seed(' in code:
+            code = code.replace('np.random.seed(', 'np.random.default_rng().random(')
+            fixes_applied.append("np.random.seed() -> np.random.default_rng()")
+        
+        # Add proper base64 encoding for images
+        if 'plt.savefig(' in code and 'base64' in code:
+            # Ensure proper base64 encoding pattern
+            if 'io.BytesIO()' not in code:
+                # Add proper base64 encoding pattern after plt.savefig calls
+                lines = code.split('\n')
+                new_lines = []
+                for line in lines:
+                    new_lines.append(line)
+                    if 'plt.savefig(' in line and 'format=' in line:
+                        # Add base64 encoding after savefig
+                        new_lines.extend([
+                            "    plt.close()  # Close figure to free memory",
+                            "    buffer.seek(0)",
+                            "    img_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')"
+                        ])
+                code = '\n'.join(new_lines)
+                fixes_applied.append("Added proper base64 encoding")
+        
+        if fixes_applied:
+            logger.info(f"🔧 Applied deprecated pattern fixes: {', '.join(fixes_applied)}")
+        
+        return code
     
     def _wrap_code_with_safety(self, code: str) -> str:
         """Wrap user code with safety measures and output capture."""

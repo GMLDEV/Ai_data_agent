@@ -59,6 +59,31 @@ REQUIREMENTS:
 7. Print results clearly
 8. **CRITICAL JSON SERIALIZATION**: When using pandas/numpy, convert data types to native Python types before JSON serialization using .item() for scalars and .tolist() for arrays
 
+CRITICAL - AVOID DEPRECATED PATTERNS:
+- **NEVER use DataFrame.append() or Series.append()** - Use pd.concat([df1, df2], ignore_index=True) instead
+- **NEVER use plt.show()** - Use plt.savefig() with io.BytesIO() for base64 encoding instead  
+- **NEVER use np.random.seed()** - Use np.random.default_rng() instead
+- **Always import required modules** - Include import statements for io, base64, etc.
+- **Use modern pandas syntax** - Avoid deprecated methods
+
+BASE64 IMAGE ENCODING PATTERN (when creating plots):
+```python
+import io
+import base64
+import matplotlib.pyplot as plt
+
+# Create your plot
+plt.figure(figsize=(10, 6))
+# ... your plotting code ...
+
+# Save to base64
+buffer = io.BytesIO()
+plt.savefig(buffer, format='png', bbox_inches='tight', dpi=300)
+plt.close()
+buffer.seek(0)
+image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+```
+
 VISUALIZATION GUIDELINES:
 - Only create visualizations if the task specifically requests them (e.g., "plot", "chart", "graph", "visualize", "dashboard")
 - Only create visualizations if the workflow_type indicates analysis that benefits from visual representation
@@ -90,6 +115,12 @@ ERROR MESSAGE:
 {error_message}
 
 ORIGINAL TASK: {task_description}
+
+COMMON FIX PATTERNS:
+- If error mentions "append": Replace DataFrame.append() or Series.append() with pd.concat([df1, df2], ignore_index=True)
+- If error mentions "AttributeError" with pandas: Check for deprecated methods
+- If error mentions missing imports: Add missing import statements (io, base64, etc.)
+- If error mentions JSON serialization: Convert numpy/pandas types using .item() or .tolist()
 
 Please provide the corrected Python code. Fix the specific error while maintaining the original intent.
 Generate ONLY the corrected Python code, no explanations:
